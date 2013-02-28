@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="blocks/course_copy/db" VERSION="20130219" COMMENT="XMLDB file for Moodle blocks/course_copy"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    <TABLE NAME="block_course_copy_master" COMMENT="All master courses where assessments can be copied from." NEXT="block_course_copy_child">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="true" ENUM="false" NEXT="course_id"/>
+        <FIELD NAME="course_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" COMMENT="references moodle course.id field." PREVIOUS="id" NEXT="timecreated"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="course_id" NEXT="timemodified"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="timecreated"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+    </TABLE>
+    <TABLE NAME="block_course_copy_child" COMMENT="Child courses with respect to course_copy_master.id as master_id." PREVIOUS="block_course_copy_master" NEXT="block_course_copy_push">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="true" ENUM="false" NEXT="master_id"/>
+        <FIELD NAME="master_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="id" NEXT="course_id"/>
+        <FIELD NAME="course_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="master_id" NEXT="timecreated"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="course_id" NEXT="timemodified"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="timecreated"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="block_course_copy_child_mid_idx" UNIQUE="false" FIELDS="master_id" COMMENT="master_id index" NEXT="block_course_copy_child_cid_idx"/>
+        <INDEX NAME="block_course_copy_child_cid_idx" UNIQUE="false" FIELDS="course_id" COMMENT="course_id index" PREVIOUS="block_course_copy_child_mid_idx"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="block_course_copy_push" COMMENT="Stores information about course modules being pushed out from a particular master." PREVIOUS="block_course_copy_child" NEXT="block_course_copy_push_inst">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="true" ENUM="false" NEXT="master_id"/>
+        <FIELD NAME="master_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="id" NEXT="src_course_id"/>
+        <FIELD NAME="src_course_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="master_id" NEXT="course_module_id"/>
+        <FIELD NAME="course_module_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="src_course_id" NEXT="user_id"/>
+        <FIELD NAME="user_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" COMMENT="user.id" PREVIOUS="course_module_id" NEXT="description"/>
+        <FIELD NAME="description" TYPE="text" LENGTH="medium" NOTNULL="true" SEQUENCE="false" ENUM="false" PREVIOUS="user_id" NEXT="timeeffective"/>
+        <FIELD NAME="timeeffective" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="description" NEXT="timecreated"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="timeeffective"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="block_course_copy_push_mid_idx" UNIQUE="false" FIELDS="master_id" COMMENT="master_id index"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="block_course_copy_push_inst" COMMENT="This is a push instance where a particular push record should be applied to a particular child." PREVIOUS="block_course_copy_push">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="true" ENUM="false" NEXT="push_id"/>
+        <FIELD NAME="push_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="id" NEXT="child_id"/>
+        <FIELD NAME="child_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="push_id" NEXT="dest_course_id"/>
+        <FIELD NAME="dest_course_id" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="child_id" NEXT="attempts"/>
+        <FIELD NAME="attempts" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="dest_course_id" NEXT="timecompleted"/>
+        <FIELD NAME="timecompleted" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="attempts" NEXT="timecreated"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="timecompleted" NEXT="timemodified"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="20" NOTNULL="true" UNSIGNED="true" SEQUENCE="false" ENUM="false" PREVIOUS="timecreated"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="block_course_copy_push_inst_pid_idx" UNIQUE="false" FIELDS="push_id"/>
+      </INDEXES>
+    </TABLE>
+  </TABLES>
+</XMLDB>
