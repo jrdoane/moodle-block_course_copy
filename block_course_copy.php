@@ -12,7 +12,10 @@ class block_course_copy extends block_base {
     }
 
     function cron() {
-        // Do nothing now. We will want to process pending copies.
+        // Process cron method for whatever course copy plugin is currently 
+        // active.
+        $course_copy = course_copy::create();
+        $course_copy->cron();
     }
 
     function get_content() {

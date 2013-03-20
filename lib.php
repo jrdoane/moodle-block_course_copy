@@ -62,7 +62,60 @@ class course_copy {
     }
 
     public function cron() {
-        // Do nothing for now. This is here for plugins.
+        // We want to check to see if any pending pushes are ready to be 
+        // processed. If they are we need to process them, if not we have to 
+        // update them to say we've seen it and that it isn't ready.
+        $pushes = $this->fetch_pending_pushes();   
+        foreach($pushes as $push) {
+            $this->attempt_push($push);
+        }
+    }
+
+    public function attempt_push($push) {
+        global $CFG;
+        if(!isset($push->push_inst)) {
+            $push->push_inst = get_records(self::db_table_prefix().'push_inst', 'push_id', $push->id);
+        }
+
+    }
+
+    public function check_dependencies() {
+    }
+
+    public function fetch_pending_pushes($course_id=null, $limit=0, $offset=0) {
+        $p = self::db_table_prefix();
+        $select = "p.*";
+        $sql_body = "
+            FROM {$p}push AS p
+            JOIN {$p}push_inst AS pi
+                ON pi.push_id = p.id
+            JOIN {$p}master AS m
+                ON m.id = p.master_id
+            JOIN {$p}child AS c
+                ON c.id = pi.child_id
+            ";
+
+        $pushes = get_records_sql("SELECT {$select} {$sql_body}");
+        if(!$pushes) {
+            return false;
+        }
+
+        $select = "pi.*";
+        $push_insts = get_records_sql("SELECT {$select} {$sql_body}");
+        if(!$push_insts) {
+            return false;
+        }
+
+        foreach($push_insts as $pi) {
+            if(!isset($pushes[$pi->push_id])) {
+                error("Push instance found that doesn't match any existing push.");
+            }
+            if(!isset($pushes[$pi->push_id]->push_inst)) {
+                $pushes[$pi->push_id]->push_inst = array();
+            }
+            $pushes[$pi->push_id]->push_inst[$pi->id] = $pi;
+        }
+
     }
 
     public function get_possible_masters() {
@@ -397,6 +450,61 @@ class course_copy {
             return array_pop($cms);
         }
         return $cms;
+    }
+}
+
+/**
+ * Default class for checking moodle course modules to verify that they're ready 
+ * to be copied.
+ */
+class course_copy_requirement_check {
+
+    public static function create($module) {
+        $module_processing_path = dirname(__FILE__) . "/mods/{$module}.php";
+        if(!include_once($module_processing_path)) {
+            error("File for requirement check class for module {$module} missing.");
+        }
+        $class_name = __CLASS__ . '_' . $module;
+        if(!class_exists($class_name)) {
+            error("Requirement class doesn't exist: $class_name");
+        }
+        return new $class_name();
+    }
+
+    public static function check_course_module($cm) {
+        if(is_numeric($cm)) {
+            $cm = get_record('course_modules', 'id', $cm);
+        }
+        if(!is_object($cm)) {
+            error('Expected object, got other.');
+        }
+
+        $module_name = get_field('modules', 'name', 'id', $cm->module);
+        $checker = self::create($module_name);
+        $checker->check($cm->instance);
+        return $checker;
+    }
+
+    private $passed;
+
+    public function __construct() {
+        $this->passed = null;
+    }
+
+    public function check($instance_id) {
+        error('This method should be overridden.');
+    }
+
+    public function passed() {
+        return $this->passed;
+    }
+
+    public function passed_for_user($user_id) {
+        error('This method should be overridden.');
+    }
+
+    public function describe($user_id=false, $summary=true) {
+        error('This method should be overridden.');
     }
 }
 

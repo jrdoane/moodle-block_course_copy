@@ -24,3 +24,5 @@ $string['pushatthistime'] = 'Postpone push until this date';
 $string['childrentopushto'] = 'Child courses to push to';
 $string['pushassessment'] = 'Push course module';
 $string['copygrades'] = 'Copy grades when applicable';
+$string['requirementcheckfailedfor'] = 'Requirement check failed for';
+$string['thereareopenattemptsthatneedtobecompleted'] = 'There are open attempts that need to be completed';
