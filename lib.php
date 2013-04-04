@@ -12,6 +12,93 @@ class course_copy {
     protected static $_cached_instance;
 
     /**
+     * This method will take a course module id and will get the appropriate 
+     * information to convert the grade_grade record for a /different/ course 
+     * module to an override for the one specific in the first argument.
+     *
+     * For now, we're going to enforce transferring grades within a course until 
+     * the implications of transferring grades from course to course is made.
+     *
+     * @param int       $course_module_id is a course_modules.id
+     * @param object    $grade_grade is a record from grade_grades.
+     * @param bool      $exclude will exclude the old grade_grade after the copy is made.
+     * @return null
+     */
+    public static function copy_grade_override($course_module_id, $grade_grade, $exclude=true) {
+        $old_grade_grade_id = $grade_grade->id;
+        $cm = get_record('course_modules', 'id', $course_module_id);
+        $grade_item = get_record('grade_items',
+            'itemodule', $cm->module,
+            'iteminstance', $cm->instance,
+            'courseid', $cm->course
+        );
+        unset($grade_grade->id);
+        $grade_grade->itemid = $grade_item->id;
+        $grade_grade->usermodified = null;
+        $grade_grade->overridden = time();
+        $grade_grade->timecreated = time();
+        $grade_grade->timemodified = time();
+        if(!insert_record('grade_grades', $grade_grade)) {
+            error('Unable to copy grade as override.');
+        }
+        if($exclude) {
+            if(!update_record('grade_grades', (object) array (
+                'id' => $old_grade_grade_id,
+                'excluded' => time(),
+                'timemodified' => time(),
+                'usermodified' => null
+            ))) {
+                error('Unable to exclude old grade.');
+            }
+        }
+    }
+
+    /**
+     * This method takes in two course_modules.ids as arguments with an 
+     * optional user_id that limits which grade(s) get copied.
+     *
+     * This returns the number of grades that are copied.
+     *
+     * TODO: Ensure that cross-course grade_copying is safe. --jdoane (20130324)
+     *
+     * @param int       $old_cm_id is course module id to copy grades from.
+     * @param int       $new_cmd_id is the course module id to copy grades to.
+     * @param int       $user_id (optional) will copy a grade for a particular user.
+     * @return int
+     */
+    public static function copy_grades($old_cm_id, $new_cm_id, $user_id=null) {
+        global $CFG;
+        $user_where = '';
+        if($user_id) {
+            $user_where = "AND gg.userid = {$user_id}";
+        }
+        $old_grades = get_records_sql("
+            SELECT
+            FROM {$CFG->prefix}course_modules AS cm
+            JOIN {$CFG->prefix}grade_items AS gi
+                ON gi.iteminstance = cm.instance
+                AND gi.itemmodule = cm.module
+                AND gi.courseid = cm.course
+            JOIN {$CFG->prefix}grade_grades AS gg
+                ON gg.itemid = gi.id
+            WHERE
+                cm.id = {$new_cm_id} {$user_where}
+        ");
+
+        /**
+         * No grades exist and if they do, we don't know how to find them.
+         */
+        if(!$old_grades) {
+            return 0;
+        }
+
+        foreach($old_grades as &$grade) {
+            self::copy_grade_override($new_cm_id, $grade);
+        }
+        return count($old_grades);
+    }
+
+    /**
      * After this gets called the first time, we store a reference to the object 
      * so we can just return our already initialized course_copy object.
      */
@@ -51,6 +138,7 @@ class course_copy {
     }
 
     public static function get_course_from_master_id($master_id) {
+        global $CFG;
         $bpre = self::db_table_prefix();
         return get_record_sql("
             SELECT c.*
@@ -65,57 +153,181 @@ class course_copy {
         // We want to check to see if any pending pushes are ready to be 
         // processed. If they are we need to process them, if not we have to 
         // update them to say we've seen it and that it isn't ready.
-        $pushes = $this->fetch_pending_pushes();   
-        foreach($pushes as $push) {
-            $this->attempt_push($push);
+    }
+
+    /**
+     * This is true if a particular string matches more than one course module 
+     * instance.
+     */
+    public static function course_module_matches_many($push, $push_inst) {
+        if (self::match_course_module($push->course_module_id, $push_inst->dest_course_id) === null) {
+            return true;
         }
+        return false;
     }
 
-    public function attempt_push($push) {
-        global $CFG;
-        if(!isset($push->push_inst)) {
-            $push->push_inst = get_records(self::db_table_prefix().'push_inst', 'push_id', $push->id);
+    /**
+     * Lets push it!
+     */
+    public function attempt_push($push, $push_inst) {
+        // If it's already complete, then get out.
+        if($push_inst->timecompleted > 0) {
+            return false;
         }
 
+        // If it's not time, get out.
+        if($push->timeeffective > time()) {
+            return false;
+        }
+
+        $push_inst->attempts++;
+        $push_inst->timemodified = time();
+        update_record('block_course_copy_push_inst', $push_inst);
+        $source_cm_id = $push->course_module_id;
+        $source_cm_name = self::get_cm_name($source_cm_id);
+        $dest_course = $push_inst->dest_course_id;
+        $deprecate_cm_id = self::match_course_module($source_cm_id, $dest_course);
+
+        // If we're replacing a course module we want to get the old name so we 
+        // can update it and we want to run the requirement_check on it to make 
+        // sure it's ready to be replaced.
+        if($deprecate_cm_id) {
+            $deprecate_cm_name = self::get_cm_name($deprecate_cm_id);
+            $check = course_copy_requirement_check::check_course_module($deprecate_cm_id);
+            if(!$check->passed()) {
+                return false;
+            }
+        }
+
+        $rval = course_copy::copy_course_module($source_cm_id, $dest_course);
+        if(!$rval) {
+            return false;
+        }
+
+        $push_inst->timecompleted = time();
+        update_record('block_course_copy_push_inst', $push_inst);
+
+        if($deprecate_cm_id) {
+            if(!self::deprecate_course_module($deprecate_cm_id)) {
+                #error('Unable to deprecate a course module.');
+                return false;
+            }
+        }
+        return true;
     }
 
-    public function check_dependencies() {
-    }
-
-    public function fetch_pending_pushes($course_id=null, $limit=0, $offset=0) {
+    public function get_push_source_cmid($push_inst_id) {
         $p = self::db_table_prefix();
-        $select = "p.*";
-        $sql_body = "
+        return get_field_sql("SELECT p.course_module_id
             FROM {$p}push AS p
             JOIN {$p}push_inst AS pi
                 ON pi.push_id = p.id
+            WHERE pi.id = $push_inst_id");
+    }
+
+    /**
+     * This method is some crazyness that can get you just about any push or 
+     * push instance that you could ever want.
+     *
+     * @param int       $child_course_id Fetch data based off child course id.
+     * @param int       $master_course_id Fetch data based off master course id.
+     * @param int       $push_id Fetch data based on the push id.
+     * @param bool      $instances Returns push instances rather than pushes.
+     * @param bool      $pending Gets pending pushes if true. Otherwise fetches 
+     *                  all records based on denormalized course ids.
+     * @return string
+     */
+    public function fetch_push_records_sql($child_course_id=false, $master_course_id=false,
+        $push_id=false, $instances=false, $pending=true, $count=false)
+    {
+        $p = self::db_table_prefix();
+        $left = 'LEFT';
+        $select = 'p.*';
+        $now = time();
+        $where = array();
+        $child_table_field = 'c.course_id';
+        $master_table_field = 'm.course_id';
+
+        $child_master_join = "
             JOIN {$p}master AS m
                 ON m.id = p.master_id
             JOIN {$p}child AS c
                 ON c.id = pi.child_id
             ";
 
-        $pushes = get_records_sql("SELECT {$select} {$sql_body}");
-        if(!$pushes) {
-            return false;
+        if($pending) {
+            $where[] = "p.timeeffective < $now";
+            $where[] = "pi.timecompleted = 0";
+        } else {
+            $child_table_field = 'p.src_course_id';
+            $master_table_field = 'pi.dest_course_id';
+            $child_master_join = '';
         }
 
-        $select = "pi.*";
-        $push_insts = get_records_sql("SELECT {$select} {$sql_body}");
-        if(!$push_insts) {
-            return false;
+        if($push_id) {
+            $where[] = "p.id = {$push_id}";
         }
 
-        foreach($push_insts as $pi) {
-            if(!isset($pushes[$pi->push_id])) {
-                error("Push instance found that doesn't match any existing push.");
-            }
-            if(!isset($pushes[$pi->push_id]->push_inst)) {
-                $pushes[$pi->push_id]->push_inst = array();
-            }
-            $pushes[$pi->push_id]->push_inst[$pi->id] = $pi;
+        if($child_course_id) {
+            $where[] = "{$child_table_field} = {$child_course_id} ";
         }
 
+        if($master_course_id) {
+            $where[] = "{$master_table_field} = {$master_course_id} ";
+        }
+
+        if($instances) {
+            $select = 'pi.*';
+            $left = '';
+        }
+
+        $where = implode(' AND ', $where);
+
+        if(!empty($where)) {
+            $where = 'WHERE ' . $where;
+        }
+
+        if($count) {
+            $select = "COUNT({$select})";
+        }
+
+        $sql = "
+            SELECT {$select}
+            FROM {$p}push AS p
+            {$left} JOIN {$p}push_inst AS pi
+                ON pi.push_id = p.id AND
+                pi.child_id IS NOT NULL
+            {$child_master_join}
+            $where
+            ";
+
+        return $sql;
+
+    }
+
+    public function fetch_pending_pushes_by_child_course($course_id=null, $limit=0, $offset=0) {
+        $sql = $this->fetch_push_records_sql($course_id);
+        return get_records_sql($sql, $offset, $limit);
+    }
+
+    public function count_pending_pushes_by_child_course($course_id) {
+        $sql = $this->fetch_push_records_sql($course_id, null, false, false, true, true);
+        return count_records_sql($sql);
+    }
+
+    public function fetch_pending_pushes_by_master_course($course_id, $limit=0, $offset=0) {
+        $sql = $this->fetch_push_records_sql(null, $course_id, false, false, true);
+        return get_records_sql($sql, $offset, $limit);
+    }
+
+    public function count_pending_pushes_by_master_course($course_id) {
+        $sql = $this->fetch_push_records_sql(null, $course_id, false, false, true, true);
+        return count_records_sql($sql);
+    }
+
+    public function fetch_pending_push_instances($push_id, $course_id=null, $limit=0, $offset=0) {
+        $sql = $this->fetch_push_records_sql($course_id, false, $push_id, true);
+        return get_records_sql($sql, $offset, $limit);
     }
 
     public function get_possible_masters() {
@@ -309,6 +521,14 @@ class course_copy {
     }
 
     public function course_has_outstanding_push($course_id) {
+        $bp = self::db_table_prefix();
+        return record_exists_sql("
+            SELECT *
+            FROM {$bp}push_inst AS pi
+            JOIN {$bp}child AS c
+                ON c.id = pi.child_id
+            WHERE c.course_id = $course_id
+            ");
     }
 
     public function master_has_children($master_id) {
@@ -347,26 +567,28 @@ class course_copy {
      * @return bool
      */
     public static function copy_course_module($cmid, $dest_course_id) {
-        $src_course_id = get_field('course_module', 'course', 'id', $cmid);
-        if(!$src_course_id) {
+        $src_course_id = get_field('course_modules', 'course', 'id', $cmid);
+        if(!$cmid) {
             error('course_module does not appear to exist.');
         }
         $err = '';
         $backup_code = self::backup_course_module($cmid, $err);
-        if(!$rval) {
+        if(!$backup_code) {
             // Backup failed.
-            error("Backup error: " . $err);
+            # error("Backup error: " . $err);
+            return false;
         }
-        if(!restore_course_module($src_course_id, $dest_course_id, $backup_code)) {
-            error('Failed to restore course module.');
+        if(!self::restore_course_module($src_course_id, $dest_course_id, $backup_code)) {
+            #error('Failed to restore course module.');
+            return false;
         }
-
+        return true;
     }
 
     public static function restore_course_module($src_course_id, $dest_course_id, $backup_code) {
         global $CFG;
         // This runs the restore.
-        $file_path = "{$CFG->datapath}/{$src_course_id}/$backup_code";
+        $file_path = "{$CFG->dataroot}/{$src_course_id}/backupdata/{$backup_code}.zip";
         $rval = import_backup_file_silently($file_path, $dest_course_id);
     }
 
@@ -381,18 +603,20 @@ class course_copy {
         define('BACKUP_SILENTLY', true);
 
         // Fake some backup data so we can generate some preferences.
-        $_GET['backup_unique_code'] = 12312312;
-        $_GET['backup_name'] = $_GET['backup_unique_code'] . '.zip';
-        $_GET["backup_{$module_name}_instance_{$cm->instance}"] = 1;
-        $_GET["backup_{$module_name}"] = 1;
-        $_GET['backup_users'] = 0;
-        $_GET['backup_user_files'] = 0;
-        $_GET['backup_course_files'] = 0;
-        $_GET['backup_gradebook_history'] = 0;
-        $_GET['backup_site_files'] = 0;
-        $_GET['backup_blogs'] = 0;
-        $_GET['backup_metacourse'] = 0;
-        $_GET['backup_messages'] = 0;
+        $backup_prefs = array();
+        $backup_prefs['backup_unique_code'] = time();
+        $backup_prefs['backup_name'] = $backup_prefs['backup_unique_code'] . '.zip';
+        $backup_prefs["backup_{$module_name}_instance_{$cm->instance}"] = 1;
+        $backup_prefs["backup_{$module_name}"] = 1;
+        $backup_prefs['backup_users'] = 0;
+        $backup_prefs['backup_user_files'] = 0;
+        $backup_prefs['backup_course_files'] = 0;
+        $backup_prefs['backup_gradebook_history'] = 0;
+        $backup_prefs['backup_site_files'] = 0;
+        $backup_prefs['backup_blogs'] = 0;
+        $backup_prefs['backup_metacourse'] = 0;
+        $backup_prefs['backup_messages'] = 0;
+        $backup_prefs['backup_course'] = $course->id;
 
         // This is out moodle backup preferences wrapper. I suspect that I will remove 
         // this before too long. -- jdoane 2012/01/16
@@ -400,12 +624,8 @@ class course_copy {
             unset($SESSION->backupprefs[$cm->course]);
         }
 
-        $prefs = new stdClass;
+        $prefs = (object)$backup_prefs;
         $count = 0;
-        $rval = backup_fetch_prefs_from_request($prefs, $count, $course);
-        if(!$rval) {
-            return false;
-        }
         $rval = backup_execute($prefs, $err);
         if($rval) {
             return $prefs->backup_unique_code;
@@ -418,26 +638,24 @@ class course_copy {
         return $CFG->prefix . "block_course_copy_";
     }
 
-    public static function get_course_modules($course_id, $cm_id=null) {
+    public static function uasort_course_modules($a, $b) {
+        return strcmp($a->instance->name, $b->instance->name);
+    }
+
+    public static function get_course_modules($course_id, $sort=false) {
         $modules = get_records('modules');
 
-        if($cm_id) {
-            $cms = get_records('course_modules', 'id', $cm_id);
-        } else {
-            $cms = get_records('course_modules', 'course', $course_id);
-        }
+        $cms = get_records('course_modules', 'course', $course_id);
         if(!$cms) {
             error("Course module with id $course_id not found.");
         }
 
         $removal = array();
-        $bad_mods = array('data', 'label', 'lesson', 'resource');
 
         foreach($cms as &$cm) {
             $cm->module = $modules[$cm->module];
-            if(in_array($cm->module->name, $bad_mods)) {
+            if(!course_copy_requirement_check::module_checkable($cm->module->name)) {
                 $removal[] = $cm->id;
-                continue;
             }
             $cm->instance = get_record($cm->module->name, 'id', $cm->instance);
         }
@@ -446,28 +664,296 @@ class course_copy {
             unset($cms[$r]);
         }
 
-        if($cm_id) {
-            return array_pop($cms);
+        if($sort) {
+            uasort($cms, array('course_copy', 'uasort_course_modules'));
         }
+
         return $cms;
+    }
+
+    public static function match_course_module($src_cm_id, $dest_course_id) {
+        $base_name = self::simplify_name(self::get_cm_name($src_cm_id));
+        $course_modules = get_records('course_modules', 'course', $dest_course_id, '', 'id, module, instance');
+        if(!$course_modules) {
+            return false;
+        }
+        foreach($course_modules as $cm) {
+            if($base_name == self::simplify_name(self::get_cm_name($cm->id))) {
+                return $cm->id;
+            }
+        }
+
+        return false;
+    }
+
+    public static function simplify_name($str) {
+        return strtolower(preg_replace('/\s/', '', $str));
+    }
+
+    /**
+     * We want to keep this as minimal as possible.
+     */
+    public static function get_cm_name($cm) {
+        return self::get_cm_instance($cm, 'name');
+    }
+
+    public static function get_cm_instance($cm, $field=false) {
+        if(is_numeric($cm)) {
+            $cm = get_record('course_modules', 'id', $cm);
+        }
+        $module_name = get_field('modules', 'name', 'id', $cm->module);
+        if($field) {
+            return get_field($module_name, $field, 'id', $cm->instance);
+        }
+        return get_record($module_name, 'id', $cm->instance);
+    }
+
+    public static function set_cm_instance($cm, $field, $value) {
+
+    }
+
+    public static function deprecate_course_module($cm_id) {
+        $cm = get_record('course_modules', 'id', $cm_id);
+        $cm->timemodified = time();
+        $cm->visible = 0;
+        $rval = update_record('course_modules', $cm);
+        $module = get_field('module', 'name', 'id', $cm->module);
+        $instance = get_record($module, 'id', $cm->instance);
+        $instance->name = '[Deprecated] ' . $instance->name;
+        $instance->timemodified = time();
+        $rval = $rval and update_record($module, $instance);
+        return $rval;
+    }
+
+    /**
+     * This method checks to see if 
+     */
+    public static function check_requirements($push, $instance) {
+        $cm = course_copy::match_course_module($push->course_module_id, $instance->dest_course_id);
+        // No replacement makes the check easy. We're good to go. :)
+        if(!$cm) {
+            return false;
+        }
+        return course_copy_requirement_check::check_course_module($cm);
+    }
+
+    public static function import_backup_wrapper($pathtofile, $destinationcourse,
+        $emptyfirst=false, $userdata=false, $preferences=array())
+    {
+        global $CFG,$SESSION,$USER; // is there such a thing on cron? I guess so..
+
+        if (!defined('RESTORE_SILENTLY')) {
+            define('RESTORE_SILENTLY',true); // don't output all the stuff to us.
+        }
+
+        $debuginfo = 'import_backup_file_silently: ';
+        $cleanupafter = false;
+        $errorstr = ''; // passed by reference to restore_precheck to get errors from.
+
+        $course = null;
+        if ($destinationcourse && !$course = get_record('course','id',$destinationcourse)) {
+            mtrace($debuginfo.'Course with id $destinationcourse was not a valid course!');
+            return false;
+        }
+
+        // first check we have a valid file.
+        if (!file_exists($pathtofile) || !is_readable($pathtofile)) {
+            mtrace($debuginfo.'File '.$pathtofile.' either didn\'t exist or wasn\'t readable');
+            return false;
+        }
+
+        // now make sure it's a zip file
+        require_once($CFG->dirroot.'/lib/filelib.php');
+        $filename = substr($pathtofile,strrpos($pathtofile,'/')+1);
+        $mimetype = mimeinfo("type", $filename);
+        if ($mimetype != 'application/zip') {
+            mtrace($debuginfo.'File '.$pathtofile.' was of wrong mimetype ('.$mimetype.')' );
+            return false;
+        }
+
+        // restore_precheck wants this within dataroot, so lets put it there if it's not already..
+        if (strstr($pathtofile,$CFG->dataroot) === false) {
+            // first try and actually move it..
+            if (!check_dir_exists($CFG->dataroot.'/temp/backup/',true)) {
+                mtrace($debuginfo.'File '.$pathtofile.' outside of dataroot and couldn\'t move it! ');
+                return false;
+            }
+            if (!copy($pathtofile,$CFG->dataroot.'/temp/backup/'.$filename)) {
+                mtrace($debuginfo.'File '.$pathtofile.' outside of dataroot and couldn\'t move it! ');
+                return false;
+            } else {
+                $pathtofile = 'temp/backup/'.$filename;
+                $cleanupafter = true;
+            }
+        } else {
+            // it is within dataroot, so take it off the path for restore_precheck.
+            $pathtofile = substr($pathtofile,strlen($CFG->dataroot.'/'));
+        }
+
+        if (!backup_required_functions()) {
+            mtrace($debuginfo.'Required function check failed (see backup_required_functions)');
+            return false;
+        }
+        @ini_set("max_execution_time","3000");
+        if (empty($CFG->extramemorylimit)) {
+            raise_memory_limit('128M');
+        } else {
+            raise_memory_limit($CFG->extramemorylimit);
+        }
+
+        if (!$backup_unique_code = restore_precheck($destinationcourse,$pathtofile,$errorstr,true)) {
+            mtrace($debuginfo.'Failed restore_precheck (error was '.$errorstr.')');
+            return false;
+        }
+
+        global $restore; // ick
+        $restore = new StdClass;
+        // copy back over the stuff that gets set in restore_precheck
+        $restore->course_header = $SESSION->course_header;
+        $restore->info          = $SESSION->info;
+
+        $xmlfile = "$CFG->dataroot/temp/backup/$backup_unique_code/moodle.xml";
+        $info = restore_read_xml_roles($xmlfile);
+        $restore->rolesmapping = array();
+        if (isset($info->roles) && is_array($info->roles)) {
+            foreach ($info->roles as $id => $info) {
+                if ($newroleid = get_field('role', 'id', 'shortname', $info->shortname)) {
+                    $restore->rolesmapping[$id] = $newroleid;
+                }
+            }
+        }
+
+        // add on some extra stuff we need...
+        $restore->metacourse = (isset($preferences['restore_metacourse']) ? $preferences['restore_metacourse'] : 0);
+        $restore->course_id = $destinationcourse;
+        if ($destinationcourse) {
+            $restore->restoreto              = RESTORETO_CURRENT_ADDING;
+            $restore->course_startdateoffset = $course->startdate - $restore->course_header->course_startdate;
+        } else {
+            $restore->restoreto              = RESTORETO_NEW_COURSE;
+            $restore->restore_restorecatto   = 0; // let this be handled by the headers
+            $restore->course_startdateoffset = 0;
+
+        }
+
+        $restore->users      = $userdata;
+        $restore->user_files = $userdata;
+        $restore->deleting   = $emptyfirst;
+
+        $restore->groups       = (isset($preferences['restore_groups']) ? $preferences['restore_groups'] : RESTORE_GROUPS_NONE);
+        $restore->logs         = (isset($preferences['restore_logs']) ? $preferences['restore_logs'] : 0);
+        $restore->messages     = (isset($preferences['restore_messages']) ? $preferences['restore_messages'] : 0);
+        $restore->blogs        = (isset($preferences['restore_blogs']) ? $preferences['restore_blogs'] : 0);
+        $restore->course_files = (isset($preferences['restore_course_files']) ? $preferences['restore_course_files'] : 0);
+        $restore->site_files   = (isset($preferences['restore_site_files']) ? $preferences['restore_site_files'] : 0);
+
+        $restore->backup_version   = $restore->info->backup_backup_version;
+        $restore->original_wwwroot = $restore->info->original_wwwroot;
+
+        // now copy what we have over to the session
+        // this needs to happen before restore_setup_for_check
+        // which for some reason reads the session
+        $SESSION->restore =& $restore;
+        // rename the things that are called differently 
+        $SESSION->restore->restore_course_files = $restore->course_files;
+        $SESSION->restore->restore_site_files   = $restore->site_files;
+        $SESSION->restore->backup_version       = $restore->info->backup_backup_version;
+
+        restore_setup_for_check($restore, $backup_unique_code);
+
+        // maybe we need users (defaults to 2 (none) in restore_setup_for_check)
+        // so set this again here
+        if (!empty($userdata)) {
+            $restore->users = 1;
+        }
+
+        // we also need modules...
+        if ($allmods = get_records("modules")) {
+            foreach ($allmods as $mod) {
+                $modname = $mod->name;
+                //Now check that we have that module info in the backup file
+                if (isset($restore->info->mods[$modname]) && $restore->info->mods[$modname]->backup == "true") {
+                    $restore->mods[$modname]->restore = true;
+                    $restore->mods[$modname]->userinfo = $userdata;
+                }
+                else {
+                    // avoid warnings
+                    $restore->mods[$modname]->restore = false;
+                    $restore->mods[$modname]->userinfo = false;
+                }
+            }
+        }
+        if (!$status = restore_execute($restore,$restore->info,$restore->course_header,$errorstr)) {
+            mtrace($debuginfo.'Failed restore_execute (error was '.$errorstr.')');
+            return false;
+        }
+        // now get out the new courseid and return that
+        if ($restore->restoreto = RESTORETO_NEW_COURSE) {
+            if (!empty($SESSION->restore->course_id)) {
+                return $SESSION->restore->course_id;
+            }
+            return false;
+        }
+        return true;
+
     }
 }
 
 /**
  * Default class for checking moodle course modules to verify that they're ready 
  * to be copied.
+ *
+ * Against my better judgement, I'm adding course module name checking to the 
+ * requirement check base code.
+ * TODO: Make this smart or get rid of it. >:-(
+ * -jdoane
  */
 class course_copy_requirement_check {
 
-    public static function create($module) {
-        $module_processing_path = dirname(__FILE__) . "/mods/{$module}.php";
-        if(!include_once($module_processing_path)) {
-            error("File for requirement check class for module {$module} missing.");
+    public static $_plugins_loaded = array();
+
+    public static function create_plugin_path($module) {
+        return dirname(__FILE__) . "/mods/{$module}.php";
+    }
+
+    public static function load_module_plugin($module, $errors=true) {
+        if(isset(self::$_plugins_loaded[$module])) {
+            return true;
+        }
+        $p = self::create_plugin_path($module);
+        if(!is_file($p)) {
+            if($errors) {
+                error("Module plugin file does not exist. {$p}");
+            }
+            return false;
+        }
+        if(!include_once($p)) {
+            if($errors) {
+                error("Unable to include plugin file. {$p}");
+            }
+            return false;
         }
         $class_name = __CLASS__ . '_' . $module;
         if(!class_exists($class_name)) {
-            error("Requirement class doesn't exist: $class_name");
+            if($errors) {
+                error("Requirement class doesn't exist: $class_name");
+            }
+            return false;
         }
+        self::$_plugins_loaded[$module] = true;
+        return true;
+    }
+
+    public static function module_checkable($module) {
+        if(self::load_module_plugin($module, false)) {
+            return true;
+        }
+        return false;
+    }
+
+    public static function create($module) {
+        self::load_module_plugin($module);
+        $class_name = __CLASS__ . '_' . $module;
         return new $class_name();
     }
 
@@ -485,7 +971,7 @@ class course_copy_requirement_check {
         return $checker;
     }
 
-    private $passed;
+    protected $passed;
 
     public function __construct() {
         $this->passed = null;
@@ -592,7 +1078,7 @@ class block_course_copy_create_push extends moodleform {
         $course_copy = course_copy::create();
         $this->master_course = get_record('course', 'id', $course_id);
         $this->child_courses = $course_copy->get_children_courses_by_master_course_id($this->master_course->id);
-        $this->course_modules = course_copy::get_course_modules($course_id, null, true, true);
+        $this->course_modules = course_copy::get_course_modules($course_id, true);
         parent::__construct($url, null, 'POST');
     }
 

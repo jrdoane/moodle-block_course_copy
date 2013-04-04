@@ -67,14 +67,12 @@ class course_copy_requirement_check_quiz extends course_copy_requirement_check {
 
         $blocker_attempts = get_records_sql($sql);
 
-        // TODO: remove this next line when we're done.
         $this->sql = $sql;
         $this->ran = true;
 
-        if(!$blocker_attempts) {
-            $this->passed = true;
-        } else {
-            $this->passed = false;
+        $this->passed = !$blocker_attempts;
+        if($this->passed) {
+            return $this->passed;
         }
 
         // We might want to use these later to find out exactly why these 
@@ -147,9 +145,6 @@ class course_copy_requirement_check_quiz extends course_copy_requirement_check {
 
         $output = '';
 
-        $error_box_start                = print_box_start('errorbox', '', true);
-        $info_box_start                 = print_box_start('informationbox', '', true);
-        $box_end                        = print_box_end(true);
         $req_check_failed_str           = course_copy::str('requirementcheckfailedfor');
         $open_attempt_student_str       = course_copy::str('youhaveanopenattemptonthisquiz');
         $open_attempt_other_str         = course_copy::str('hasanopenattemptonthisquiz');
@@ -158,8 +153,8 @@ class course_copy_requirement_check_quiz extends course_copy_requirement_check {
         $open_count_str                 = course_copy::str('thereareopenattemptsthatneedtobecompleted');
         $check_passed_str               = course_copy::str('requirementcheckpassedfor');
 
-        $fail_start = $error_box_start . print_heading($req_check_failed_str . $this->quiz->name, 'center', 3, 'main', true);
-        $success_start = $info_box_start . print_heading($check_passed_str . $this->quiz->name, 'center', 3, 'main', true) . $box_end;
+        $fail_start = print_heading($req_check_failed_str . ' ' . $this->quiz->name, 'center', 4, 'main', true);
+        $success_start = print_heading($check_passed_str . ' ' . $this->quiz->name, 'center', 4, 'main', true);
 
         if($this->passed()) {
             return $success_start;
@@ -173,9 +168,9 @@ class course_copy_requirement_check_quiz extends course_copy_requirement_check {
             }
 
             if($user_id == $USER->id) {
-                return $fail_start . $open_attempt_student_str . $box_end;
+                return $fail_start . $open_attempt_student_str;
             } else {
-                return $fail_start . $open_attempt_other_str . $box_end;
+                return $fail_start . $open_attempt_other_str;
             }
         }
 
@@ -190,26 +185,31 @@ class course_copy_requirement_check_quiz extends course_copy_requirement_check {
             if($open > 0) {
                 $output .= "{$open_count_str} ({$open})<br />";
             }
-            $output .= "</p>" . $box_end;
+            $output .= "</p>";
             return $output;
         }
         $error_list = array();
 
         foreach($this->blocker_by_student as $user_id => $sal) {
-            if($sal->attempt_open) {
-                $error_list[] = fullname($sal->user) . $open_attempt_other_str;
-            }
-            if($sal->grading_required) {
-                $error_list[] = fullname($sal->user) . $gradable_attempt_str;
+            foreach($sal as $attempt_id => $attempt_info) {
+                if($attempt_info->attempt_open) {
+                    $error_list[] = fullname($attempt_info->user) . ' ' . $open_attempt_other_str;
+                }
+                if($attempt_info->grading_required) {
+                    $error_list[] = fullname($attempt_info->user) . ' ' . $gradable_attempt_str;
+                }
             }
         }
-        $output .= implode("<br />\n", $error_list) . "</p>" . $box_end;
+        $output .= implode("<br />\n", $error_list) . "</p>";
 
         return $output;
     }
 
     private function count_blockers($gradable = true, $open = true) {
         $count = 0;
+        if(empty($this->blocker_attempts)) {
+            return $count;
+        }
         foreach($this->blocker_attempts as $quiz_instance => $data) {
             foreach($data as $ba) {
                 if (($gradable and $ba->grading_required) or ($open and $ba->attempt_open)) {

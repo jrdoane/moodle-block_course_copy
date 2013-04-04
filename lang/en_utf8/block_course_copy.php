@@ -26,3 +26,7 @@ $string['pushassessment'] = 'Push course module';
 $string['copygrades'] = 'Copy grades when applicable';
 $string['requirementcheckfailedfor'] = 'Requirement check failed for';
 $string['thereareopenattemptsthatneedtobecompleted'] = 'There are open attempts that need to be completed';
+$string['hasanopenattemptonthisquiz'] = 'has an open attempt on this quiz.';
+$string['hasworkreadytobegraded'] = 'has work ready to be graded.';
+$string['coursemoduleswithsamename'] = 'This push is being blocked because there are two course modules with the same name in this course.';
+$string['coursecopynotification'] = 'Course copy notification';

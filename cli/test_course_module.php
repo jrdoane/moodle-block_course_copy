@@ -18,5 +18,7 @@ if($rval->passed()) {
     print "Course module passes the check.\n";
 } else {
     print "Course module does not pass the check.\n";
-    print $rval->describe();
+    print "\n------------\n";
+    print $rval->describe(false, false);
+    print "\n------------\n";
 }
