@@ -11,6 +11,10 @@ class block_course_copy extends block_base {
         $this->cron = 0; // Enable this when the time comes.
     }
 
+    function has_config() {
+        return true;
+    }
+
     function cron() {
         // Process cron method for whatever course copy plugin is currently 
         // active.

@@ -2,6 +2,7 @@
 require_once("{$CFG->dirroot}/backup/lib.php");
 require_once("{$CFG->dirroot}/backup/backuplib.php");
 require_once("{$CFG->dirroot}/backup/restorelib.php");
+require_once("{$CFG->dirroot}/lib/xmlize.php");
 
 /**
  * CourseCopy represents the basic ability of this block. Plugins will exist to 
@@ -11,46 +12,23 @@ class course_copy {
 
     protected static $_cached_instance;
 
-    /**
-     * This method will take a course module id and will get the appropriate 
-     * information to convert the grade_grade record for a /different/ course 
-     * module to an override for the one specific in the first argument.
-     *
-     * For now, we're going to enforce transferring grades within a course until 
-     * the implications of transferring grades from course to course is made.
-     *
-     * @param int       $course_module_id is a course_modules.id
-     * @param object    $grade_grade is a record from grade_grades.
-     * @param bool      $exclude will exclude the old grade_grade after the copy is made.
-     * @return null
-     */
-    public static function copy_grade_override($course_module_id, $grade_grade, $exclude=true) {
-        $old_grade_grade_id = $grade_grade->id;
-        $cm = get_record('course_modules', 'id', $course_module_id);
-        $grade_item = get_record('grade_items',
-            'itemodule', $cm->module,
-            'iteminstance', $cm->instance,
-            'courseid', $cm->course
+    public static function course_module_grade_item($cm) {
+        $module = get_field('modules', 'name', 'id', $cm->module);
+        return get_record_select('grade_items',
+            "itemid = {$cm->instance} AND itemmodule = '{$module}'"
         );
-        unset($grade_grade->id);
-        $grade_grade->itemid = $grade_item->id;
-        $grade_grade->usermodified = null;
-        $grade_grade->overridden = time();
-        $grade_grade->timecreated = time();
-        $grade_grade->timemodified = time();
-        if(!insert_record('grade_grades', $grade_grade)) {
-            error('Unable to copy grade as override.');
+    }
+
+    public static function course_module_grade_grades($cm) {
+        if(is_numeric($cm)) {
+            $cm = get_record('course_modules', 'id', $cm);
         }
-        if($exclude) {
-            if(!update_record('grade_grades', (object) array (
-                'id' => $old_grade_grade_id,
-                'excluded' => time(),
-                'timemodified' => time(),
-                'usermodified' => null
-            ))) {
-                error('Unable to exclude old grade.');
-            }
+        if(!is_object($cm)) {
+            error("Invalid parameter cm: $cm");
         }
+        $gi = self::course_module_grade_item($cm);
+        $gg = new grade_grade();
+        return $gg->fetch_all(array('itemid' => $gi->id));
     }
 
     /**
@@ -66,34 +44,34 @@ class course_copy {
      * @param int       $user_id (optional) will copy a grade for a particular user.
      * @return int
      */
-    public static function copy_grades($old_cm_id, $new_cm_id, $user_id=null) {
+    public static function copy_grades($old_cm_id, $new_cm_id) {
         global $CFG;
-        $user_where = '';
-        if($user_id) {
-            $user_where = "AND gg.userid = {$user_id}";
-        }
-        $old_grades = get_records_sql("
-            SELECT
-            FROM {$CFG->prefix}course_modules AS cm
-            JOIN {$CFG->prefix}grade_items AS gi
-                ON gi.iteminstance = cm.instance
-                AND gi.itemmodule = cm.module
-                AND gi.courseid = cm.course
-            JOIN {$CFG->prefix}grade_grades AS gg
-                ON gg.itemid = gi.id
-            WHERE
-                cm.id = {$new_cm_id} {$user_where}
-        ");
+        $module = get_field('modules', 'name', 'id', $old_cm->module);
+        $old_cm = get_record('course_modules', 'id', $old_cm_id);
+        $new_cm = get_record('course_modules', 'id', $new_cm_id);
 
-        /**
-         * No grades exist and if they do, we don't know how to find them.
-         */
-        if(!$old_grades) {
-            return 0;
-        }
+        $refresh_function = $module . '_grade_item_update';
+        $instance = get_record($module, 'id', $new_cm->instance);
+        $refresh_function($instance, 'reset');
 
-        foreach($old_grades as &$grade) {
-            self::copy_grade_override($new_cm_id, $grade);
+        $old_grades = self::course_module_grade_grades($old_cm);
+
+        foreach($old_grades as &$n) {
+            unset($n->id);
+            $n->itemid = $new_gi->id;
+            $n->overridden = time();
+            $n->timecreated = time();
+            $n->timemodified = time();
+            if($existing_gg_id = get_field('grade_grades', 'id', 'itemid', $new_gi->id, 'userid', $n->userid)) {
+                $n->id = $existing_gg_id;
+                if(!$n->update()) {
+                    error('Updating grade with grade override failed.');
+                }
+            } else {
+                if(!$n->insert()) {
+                    error('Inserting grade with grade override failed.');
+                }
+            }
         }
         return count($old_grades);
     }
@@ -168,6 +146,10 @@ class course_copy {
 
     /**
      * Lets push it!
+     *
+     * @param object    $push is a push record.
+     * @param object    $push_inst is the instance being attempted.
+     * @return bool
      */
     public function attempt_push($push, $push_inst) {
         // If it's already complete, then get out.
@@ -182,11 +164,17 @@ class course_copy {
 
         $push_inst->attempts++;
         $push_inst->timemodified = time();
+        // TODO? Do we want to check this output to ensure it succeededs? There 
+        // is no reason why it shouldn't unless $push_inst is bad.
         update_record('block_course_copy_push_inst', $push_inst);
         $source_cm_id = $push->course_module_id;
         $source_cm_name = self::get_cm_name($source_cm_id);
         $dest_course = $push_inst->dest_course_id;
-        $deprecate_cm_id = self::match_course_module($source_cm_id, $dest_course);
+        $replace = self::is_replacing();
+        $deprecate_cm_id = null;
+        if($replace) {
+            $deprecate_cm_id = self::match_course_module($source_cm_id, $dest_course);
+        }
 
         // If we're replacing a course module we want to get the old name so we 
         // can update it and we want to run the requirement_check on it to make 
@@ -208,9 +196,22 @@ class course_copy {
         update_record('block_course_copy_push_inst', $push_inst);
 
         if($deprecate_cm_id) {
+            // Make this course module not visible and alter the name.
             if(!self::deprecate_course_module($deprecate_cm_id)) {
-                #error('Unable to deprecate a course module.');
-                return false;
+                error('Unable to deprecate a course module.');
+            }
+
+            // At this point the old course module's name has been changed but 
+            // we need the course module that was just newly imported. Running 
+            // this a second time after we change the old name should leave us 
+            // with just the course module we just created.
+            $new_cm_id = self::match_course_module($source_cm_id, $dest_course);
+
+            // If we're copying grades, do that now.
+            if (self::is_copying_grades()) {
+                if(!self::copy_grades($deprecate_cm_id, $new_cm_id)) {
+                    error("Failed to copy grades from cm ($deprecate_cm_id) to ($new_cm_id).");
+                }
             }
         }
         return true;
@@ -578,18 +579,73 @@ class course_copy {
             # error("Backup error: " . $err);
             return false;
         }
-        if(!self::restore_course_module($src_course_id, $dest_course_id, $backup_code)) {
+        if(!self::restore_course_module($cmid, $dest_course_id, $backup_code)) {
             #error('Failed to restore course module.');
             return false;
         }
         return true;
     }
 
-    public static function restore_course_module($src_course_id, $dest_course_id, $backup_code) {
+    public static function generate_restore_prefs($course_module_id, $destination_course_id) {
+        $restore_prefs = self::generate_prefs('restore');
+        $cm = get_record('course_modules', 'id', $course_module_id);
+        $module_name = get_field('modules', 'name', 'id', $cm->module);
+        $restore_prefs["restore_{$module_name}"] = 1;
+        return $restore_prefs;
+    }
+
+    public static function generate_backup_prefs($course_module_id) {
+        $cm = get_record('course_modules', 'id', $course_module_id);
+        $module_name = get_field('modules', 'name', 'id', $cm->module);
+        $course = get_record('course', 'id', $cm->course);
+        $instance_name = get_field($module_name, 'name', 'id', $cm->instance);
+        $backup_prefs = self::generate_prefs('backup', $course->id);
+        $backup_prefs["backup_unique_code"] = time();
+        $backup_prefs["backup_name"] = $backup_prefs["backup_unique_code"] . ".zip";
+        $backup_prefs["exists_one_{$module_name}"] = true;
+        $backup_prefs["mods"] = array(
+            $module_name => (object)array(
+                'name' => $module_name,
+                'instances' => array(
+                    $cm->instance => (object)array(
+                        'name' => $instance_name,
+                        'backup' => 1,
+                        'userinfo' => 0
+                    )
+                ),
+                'backup' => 1,
+                'userinfo' => 0
+            )
+        );
+        $backup_prefs = (object)$backup_prefs;
+        backup_add_static_preferences($backup_prefs);
+        return $backup_prefs;
+    }
+
+    public static function generate_prefs($prefix, $course_id=null) {
+        $prefs = array();
+        $prefs["{$prefix}_users"] = 0;
+        $prefs["{$prefix}_user_files"] = 0;
+        $prefs["{$prefix}_course_files"] = 0;
+        $prefs["{$prefix}_gradebook_history"] = 0;
+        $prefs["{$prefix}_site_files"] = 0;
+        $prefs["{$prefix}_blogs"] = 0;
+        $prefs["{$prefix}_metacourse"] = 0;
+        $prefs["{$prefix}_messages"] = 0;
+        if($course_id) {
+            $prefs["{$prefix}_course"] = $course_id;
+        }
+        return $prefs;
+    }
+
+    public static function restore_course_module($src_course_module_id, $dest_course_id, $backup_code) {
         global $CFG;
         // This runs the restore.
+        $src_course_id = get_field('course_modules', 'course', 'id', $src_course_module_id);
+        $prefs = self::generate_restore_prefs($src_course_module_id, $dest_course_id);
         $file_path = "{$CFG->dataroot}/{$src_course_id}/backupdata/{$backup_code}.zip";
-        $rval = import_backup_file_silently($file_path, $dest_course_id);
+        $rval = import_backup_file_silently($file_path, $dest_course_id, false, false, $prefs);
+        return $rval;
     }
 
     public static function backup_course_module($cmid, &$err='') {
@@ -603,28 +659,7 @@ class course_copy {
         define('BACKUP_SILENTLY', true);
 
         // Fake some backup data so we can generate some preferences.
-        $backup_prefs = array();
-        $backup_prefs['backup_unique_code'] = time();
-        $backup_prefs['backup_name'] = $backup_prefs['backup_unique_code'] . '.zip';
-        $backup_prefs["backup_{$module_name}_instance_{$cm->instance}"] = 1;
-        $backup_prefs["backup_{$module_name}"] = 1;
-        $backup_prefs['backup_users'] = 0;
-        $backup_prefs['backup_user_files'] = 0;
-        $backup_prefs['backup_course_files'] = 0;
-        $backup_prefs['backup_gradebook_history'] = 0;
-        $backup_prefs['backup_site_files'] = 0;
-        $backup_prefs['backup_blogs'] = 0;
-        $backup_prefs['backup_metacourse'] = 0;
-        $backup_prefs['backup_messages'] = 0;
-        $backup_prefs['backup_course'] = $course->id;
-
-        // This is out moodle backup preferences wrapper. I suspect that I will remove 
-        // this before too long. -- jdoane 2012/01/16
-        if (isset($SESSION->backupprefs[$cm->course])) {
-            unset($SESSION->backupprefs[$cm->course]);
-        }
-
-        $prefs = (object)$backup_prefs;
+        $prefs = self::generate_backup_prefs($cmid);
         $count = 0;
         $rval = backup_execute($prefs, $err);
         if($rval) {
@@ -708,25 +743,43 @@ class course_copy {
         return get_record($module_name, 'id', $cm->instance);
     }
 
-    public static function set_cm_instance($cm, $field, $value) {
-
-    }
-
     public static function deprecate_course_module($cm_id) {
+        // The the course module and hide it.
         $cm = get_record('course_modules', 'id', $cm_id);
         $cm->timemodified = time();
         $cm->visible = 0;
         $rval = update_record('course_modules', $cm);
-        $module = get_field('module', 'name', 'id', $cm->module);
+
+        // Update the name of the module instance
+        $module = get_field('modules', 'name', 'id', $cm->module);
         $instance = get_record($module, 'id', $cm->instance);
+        // TODO: Make this prepended string a configurable option.
         $instance->name = '[Deprecated] ' . $instance->name;
         $instance->timemodified = time();
         $rval = $rval and update_record($module, $instance);
+
+        // Lock the old grade item.
+        $gei = new grade_item();
+        $gi = $gei->fetch(array(
+            'iteminstance' => $instance->id,
+            'itemmodule' => $module
+        ));
+        $gi->locked = time();
+        $rval = $rval and $gi->update();
         return $rval;
     }
 
+    public static function is_copying_grades() {
+        return get_config(null, 'block_course_copy_transfer_grades');
+    }
+
+    public static function is_replacing() {
+        return get_config(null, 'block_course_copy_replace');
+    }
+
     /**
-     * This method checks to see if 
+     * This method checks to see if requirements to copy this course module are 
+     * met. This depends much more on the course module that is being replaced.
      */
     public static function check_requirements($push, $instance) {
         $cm = course_copy::match_course_module($push->course_module_id, $instance->dest_course_id);
@@ -1087,7 +1140,6 @@ class block_course_copy_create_push extends moodleform {
         $form->addElement('header', 'assessment_push', course_copy::str('createpush'));
 
         $form->addElement('htmleditor', 'description', course_copy::str('descriptionforpush'));
-        $form->addElement('checkbox', 'copy_grades', course_copy::str('copygrades'));
         $form->addElement('checkbox', 'pushnow', course_copy::str('pushnow'));
         $form->addElement('date_time_selector', 'timeeffective', course_copy::str('pushatthistime'));
 

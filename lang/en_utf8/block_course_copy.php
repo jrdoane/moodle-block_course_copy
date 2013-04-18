@@ -1,6 +1,7 @@
 <?php
 
 $string['blockname'] = 'Course copy';
+$string['coursecopysettings'] = 'Course copy block settings';
 $string['makethiscourseamaster'] = 'Make this course a master';
 $string['makethiscourseachild'] = 'Make this course a child';
 $string['thiscourseisamaster'] = 'This course is a course copy master.';
@@ -30,3 +31,8 @@ $string['hasanopenattemptonthisquiz'] = 'has an open attempt on this quiz.';
 $string['hasworkreadytobegraded'] = 'has work ready to be graded.';
 $string['coursemoduleswithsamename'] = 'This push is being blocked because there are two course modules with the same name in this course.';
 $string['coursecopynotification'] = 'Course copy notification';
+$string['coursecopydescription'] = "These settings configure how the course copy block behaves when a course module is copied from one course to another.";
+$string['transfergrades'] = "Transfer grades";
+$string['transfergradesdescription'] = "If checked, the course copy block will copy grades from the course module that matches in the destination course. Only if replacing.";
+$string['replace'] = 'Deprecate and replace old course moudle';
+$string['replacedescription'] = htmlspecialchars('Hides and prepends "[Deprecated]" to the course module instance name with a matching name in the destination course.');
