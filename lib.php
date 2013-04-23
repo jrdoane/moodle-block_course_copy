@@ -1,4 +1,5 @@
 <?php
+require_once(dirname(dirname(dirname(__FILE__))) . '/config.php');
 require_once("{$CFG->dirroot}/backup/lib.php");
 require_once("{$CFG->dirroot}/backup/backuplib.php");
 require_once("{$CFG->dirroot}/backup/restorelib.php");
@@ -249,6 +250,13 @@ class course_copy {
         $child_table_field = 'c.course_id';
         $master_table_field = 'm.course_id';
 
+        /**
+         * Start of orphan control and handling for pending pushes.
+         * ---
+         * REMEMBER! If we don't have a master_id or child_id set 
+         * in push or push_inst, it should NEVER BE PENDING! In fact if it 
+         * hasn't been completed, in this state it is abandoned.
+         */
         $child_master_join = "
             JOIN {$p}master AS m
                 ON m.id = p.master_id
@@ -264,18 +272,36 @@ class course_copy {
             $master_table_field = 'pi.dest_course_id';
             $child_master_join = '';
         }
+        /**
+         * End of orphan control and handling for pending pushes.
+         */
 
         if($push_id) {
             $where[] = "p.id = {$push_id}";
         }
+        
+        // Decoupled course OR WHERE from AND WHERE array.
+        $course_where = array();
 
+        /*
+         * If child_course_id and master_course_id are the same thing, we want 
+         * a full history of this one course as opposed to pushes that have 
+         * children of itself which should never happen.
+         */
         if($child_course_id) {
-            $where[] = "{$child_table_field} = {$child_course_id} ";
+            $course_where[] = "{$child_table_field} = {$child_course_id} ";
         }
 
         if($master_course_id) {
-            $where[] = "{$master_table_field} = {$master_course_id} ";
+            $course_where[] = "{$master_table_field} = {$master_course_id} ";
         }
+
+        // Get the course's history if child and master course ids are the same.
+        $sql_op = ' AND ';
+        if($master_course_id == $child_course_id) {
+            $sql_op = ' OR ';
+        }
+        $where[] = implode($sql_op, $course_where);
 
         if($instances) {
             $select = 'pi.*';
@@ -329,6 +355,38 @@ class course_copy {
     public function fetch_pending_push_instances($push_id, $course_id=null, $limit=0, $offset=0) {
         $sql = $this->fetch_push_records_sql($course_id, false, $push_id, true);
         return get_records_sql($sql, $offset, $limit);
+    }
+
+    public function course_has_history($course_id) {
+        return record_exists('block_course_copy_push', 'src_course_id', $course_id) or
+            record_exists('block_course_copy_push_inst', 'dest_course_id', $course_id);
+    }
+
+    /**
+     * This fetches push information for a particular course. This includes 
+     * outgoing pushes and incoming pushes as opposed to a single direction like 
+     * the fetch_pending_pushes_... methods which target one and the other as 
+     * opposed to one or the other. This is also fairly easy to query.
+     */
+    public function fetch_course_push_history($course_id, $limit=0, $offset=0) {
+        $sql = $this->fetch_push_records_sql($course_id, $course_id);
+        $data = get_records_sql($sql, $offset, $limit);
+        // Almost there, we want all the push_inst records to be included here 
+        // as well.
+        foreach($data as &$d) {
+            $d->instances = array();
+            $sql = $this->fetch_push_records_sql($course_id, $course_id, $d->id, true);
+            $inst = get_records_sql($sql);
+            if($inst) {
+                $d->instances = $inst;
+            }
+        }
+        return $data;
+    }
+
+    public function fetch_course_push_history_count($course_id) {
+        return count_records_sql($this->fetch_push_records_sql(
+            $course_id, $course_id, false, false, false, true));
     }
 
     public function get_possible_masters() {
@@ -788,167 +846,6 @@ class course_copy {
             return false;
         }
         return course_copy_requirement_check::check_course_module($cm);
-    }
-
-    public static function import_backup_wrapper($pathtofile, $destinationcourse,
-        $emptyfirst=false, $userdata=false, $preferences=array())
-    {
-        global $CFG,$SESSION,$USER; // is there such a thing on cron? I guess so..
-
-        if (!defined('RESTORE_SILENTLY')) {
-            define('RESTORE_SILENTLY',true); // don't output all the stuff to us.
-        }
-
-        $debuginfo = 'import_backup_file_silently: ';
-        $cleanupafter = false;
-        $errorstr = ''; // passed by reference to restore_precheck to get errors from.
-
-        $course = null;
-        if ($destinationcourse && !$course = get_record('course','id',$destinationcourse)) {
-            mtrace($debuginfo.'Course with id $destinationcourse was not a valid course!');
-            return false;
-        }
-
-        // first check we have a valid file.
-        if (!file_exists($pathtofile) || !is_readable($pathtofile)) {
-            mtrace($debuginfo.'File '.$pathtofile.' either didn\'t exist or wasn\'t readable');
-            return false;
-        }
-
-        // now make sure it's a zip file
-        require_once($CFG->dirroot.'/lib/filelib.php');
-        $filename = substr($pathtofile,strrpos($pathtofile,'/')+1);
-        $mimetype = mimeinfo("type", $filename);
-        if ($mimetype != 'application/zip') {
-            mtrace($debuginfo.'File '.$pathtofile.' was of wrong mimetype ('.$mimetype.')' );
-            return false;
-        }
-
-        // restore_precheck wants this within dataroot, so lets put it there if it's not already..
-        if (strstr($pathtofile,$CFG->dataroot) === false) {
-            // first try and actually move it..
-            if (!check_dir_exists($CFG->dataroot.'/temp/backup/',true)) {
-                mtrace($debuginfo.'File '.$pathtofile.' outside of dataroot and couldn\'t move it! ');
-                return false;
-            }
-            if (!copy($pathtofile,$CFG->dataroot.'/temp/backup/'.$filename)) {
-                mtrace($debuginfo.'File '.$pathtofile.' outside of dataroot and couldn\'t move it! ');
-                return false;
-            } else {
-                $pathtofile = 'temp/backup/'.$filename;
-                $cleanupafter = true;
-            }
-        } else {
-            // it is within dataroot, so take it off the path for restore_precheck.
-            $pathtofile = substr($pathtofile,strlen($CFG->dataroot.'/'));
-        }
-
-        if (!backup_required_functions()) {
-            mtrace($debuginfo.'Required function check failed (see backup_required_functions)');
-            return false;
-        }
-        @ini_set("max_execution_time","3000");
-        if (empty($CFG->extramemorylimit)) {
-            raise_memory_limit('128M');
-        } else {
-            raise_memory_limit($CFG->extramemorylimit);
-        }
-
-        if (!$backup_unique_code = restore_precheck($destinationcourse,$pathtofile,$errorstr,true)) {
-            mtrace($debuginfo.'Failed restore_precheck (error was '.$errorstr.')');
-            return false;
-        }
-
-        global $restore; // ick
-        $restore = new StdClass;
-        // copy back over the stuff that gets set in restore_precheck
-        $restore->course_header = $SESSION->course_header;
-        $restore->info          = $SESSION->info;
-
-        $xmlfile = "$CFG->dataroot/temp/backup/$backup_unique_code/moodle.xml";
-        $info = restore_read_xml_roles($xmlfile);
-        $restore->rolesmapping = array();
-        if (isset($info->roles) && is_array($info->roles)) {
-            foreach ($info->roles as $id => $info) {
-                if ($newroleid = get_field('role', 'id', 'shortname', $info->shortname)) {
-                    $restore->rolesmapping[$id] = $newroleid;
-                }
-            }
-        }
-
-        // add on some extra stuff we need...
-        $restore->metacourse = (isset($preferences['restore_metacourse']) ? $preferences['restore_metacourse'] : 0);
-        $restore->course_id = $destinationcourse;
-        if ($destinationcourse) {
-            $restore->restoreto              = RESTORETO_CURRENT_ADDING;
-            $restore->course_startdateoffset = $course->startdate - $restore->course_header->course_startdate;
-        } else {
-            $restore->restoreto              = RESTORETO_NEW_COURSE;
-            $restore->restore_restorecatto   = 0; // let this be handled by the headers
-            $restore->course_startdateoffset = 0;
-
-        }
-
-        $restore->users      = $userdata;
-        $restore->user_files = $userdata;
-        $restore->deleting   = $emptyfirst;
-
-        $restore->groups       = (isset($preferences['restore_groups']) ? $preferences['restore_groups'] : RESTORE_GROUPS_NONE);
-        $restore->logs         = (isset($preferences['restore_logs']) ? $preferences['restore_logs'] : 0);
-        $restore->messages     = (isset($preferences['restore_messages']) ? $preferences['restore_messages'] : 0);
-        $restore->blogs        = (isset($preferences['restore_blogs']) ? $preferences['restore_blogs'] : 0);
-        $restore->course_files = (isset($preferences['restore_course_files']) ? $preferences['restore_course_files'] : 0);
-        $restore->site_files   = (isset($preferences['restore_site_files']) ? $preferences['restore_site_files'] : 0);
-
-        $restore->backup_version   = $restore->info->backup_backup_version;
-        $restore->original_wwwroot = $restore->info->original_wwwroot;
-
-        // now copy what we have over to the session
-        // this needs to happen before restore_setup_for_check
-        // which for some reason reads the session
-        $SESSION->restore =& $restore;
-        // rename the things that are called differently 
-        $SESSION->restore->restore_course_files = $restore->course_files;
-        $SESSION->restore->restore_site_files   = $restore->site_files;
-        $SESSION->restore->backup_version       = $restore->info->backup_backup_version;
-
-        restore_setup_for_check($restore, $backup_unique_code);
-
-        // maybe we need users (defaults to 2 (none) in restore_setup_for_check)
-        // so set this again here
-        if (!empty($userdata)) {
-            $restore->users = 1;
-        }
-
-        // we also need modules...
-        if ($allmods = get_records("modules")) {
-            foreach ($allmods as $mod) {
-                $modname = $mod->name;
-                //Now check that we have that module info in the backup file
-                if (isset($restore->info->mods[$modname]) && $restore->info->mods[$modname]->backup == "true") {
-                    $restore->mods[$modname]->restore = true;
-                    $restore->mods[$modname]->userinfo = $userdata;
-                }
-                else {
-                    // avoid warnings
-                    $restore->mods[$modname]->restore = false;
-                    $restore->mods[$modname]->userinfo = false;
-                }
-            }
-        }
-        if (!$status = restore_execute($restore,$restore->info,$restore->course_header,$errorstr)) {
-            mtrace($debuginfo.'Failed restore_execute (error was '.$errorstr.')');
-            return false;
-        }
-        // now get out the new courseid and return that
-        if ($restore->restoreto = RESTORETO_NEW_COURSE) {
-            if (!empty($SESSION->restore->course_id)) {
-                return $SESSION->restore->course_id;
-            }
-            return false;
-        }
-        return true;
-
     }
 }
 

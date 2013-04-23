@@ -29,6 +29,7 @@ class block_course_copy extends block_base {
         $this->content->footer = '';
         $course_copy = course_copy::create();
         $base_url = "{$CFG->wwwroot}/blocks/course_copy";
+        $option_list = array();
 
         if($COURSE->id != SITEID) {
             if($course_copy->can_be_master($COURSE->id)) {
@@ -36,7 +37,7 @@ class block_course_copy extends block_base {
                 $url = new moodle_url("{$CFG->wwwroot}/blocks/course_copy/set.php");
                 $url->param('master', 1);
                 $url->param('course_id', $COURSE->id);
-                $this->content->text .= "<a href=\"".$url->out()."\">{$make_master_str}</a><br />";
+                $option_list[] = "<a href=\"".$url->out()."\">{$make_master_str}</a>";
             }
 
             if($course_copy->can_be_child($COURSE->id)) {
@@ -44,7 +45,7 @@ class block_course_copy extends block_base {
                 $url = new moodle_url("{$CFG->wwwroot}/blocks/course_copy/set.php");
                 $url->param('create_child', 1);
                 $url->param('course_id', $COURSE->id);
-                $this->content->text .= "<a href=\"".$url->out()."\">{$make_child_str}</a><br />";
+                $option_list[] = "<a href=\"".$url->out()."\">{$make_child_str}</a>";
             }
 
             if($course_copy->is_master($COURSE->id)) {
@@ -55,7 +56,7 @@ class block_course_copy extends block_base {
                     $url->param('master_course_id', $COURSE->id);
                     $url = $url->out();
                     $str = course_copy::str('pushcoursemodule');
-                    $this->content->text .= "<a href=\"{$url}\">{$str}</a><br /><br />";
+                    $option_list[] = "<a href=\"{$url}\">{$str}</a>";
                 } else {
                     $str = course_copy::str('masterhasnochildren');
                     $this->content->text .= "{$str}<br /><br />";
@@ -66,7 +67,7 @@ class block_course_copy extends block_base {
                 $url->param('course_id', $COURSE->id);
                 $url = $url->out();
                 $str = course_copy::str('relinquishmasterstatus');
-                $this->content->text .= "<a href=\"{$url}\">{$str}</a>";
+                $option_list[] = "<a href=\"{$url}\">{$str}</a>";
             }
 
             if($course_copy->is_child($COURSE->id)) {
@@ -78,10 +79,29 @@ class block_course_copy extends block_base {
                 $url->param('course_id', $COURSE->id);
                 $url = $url->out();
                 $str = course_copy::str('relinquishchildstatus');
-                $this->content->text .= "<a href=\"{$url}\">{$str}</a>";
+                $option_list[] = "<a href=\"{$url}\">{$str}</a>";
+            }
+
+            if ($course_copy->course_has_history($COURSE->id)) {
+                $str = course_copy::str('viewhistory');
+                $url = new moodle_url("{$base_url}/history/view.php");
+                $url->param('course_id', $COURSE->id);
+                $option_list[] = '<a href="' . $url->out() . "\">$str</a>";
             }
         }
+        if(!empty($option_list)) {
+            
+            $this->content->text .= "<ul>".$this->make_list_items($option_list)."</ul>";
+        }
         return $this->content;
+    }
+
+    private function make_list_items($array) {
+        $output = '';
+        foreach($array as $a) {
+            $output .= "<li>$a</li>";
+        }
+        return $output;
     }
 }
 

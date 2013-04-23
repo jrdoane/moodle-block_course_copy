@@ -36,3 +36,15 @@ $string['transfergrades'] = "Transfer grades";
 $string['transfergradesdescription'] = "If checked, the course copy block will copy grades from the course module that matches in the destination course. Only if replacing.";
 $string['replace'] = 'Deprecate and replace old course moudle';
 $string['replacedescription'] = htmlspecialchars('Hides and prepends "[Deprecated]" to the course module instance name with a matching name in the destination course.');
+$string['viewhistory'] = 'View history';
+
+$string['sourcecoursemodule'] = 'Source course module';
+$string['sourcecourse'] = 'Source course';
+$string['desinationcourses'] = 'Destination courses';
+$string['status'] = 'Status';
+$string['issuedby'] = 'Issued by';
+$string['timeeffective'] = 'Date effective';
+$string['timecreated'] = 'Date created';
+$string['untouched'] = 'Untouched';
+$string['immediately'] = 'Immediately';
+$string['details'] = 'Details';
