@@ -13,6 +13,55 @@ class course_copy {
 
     protected static $_cached_instance;
 
+    /**
+     * This is basically a: if null, get current user_id, otherwise user 
+     * user_id. This is wrapped to protect the scope of $USER.
+     *
+     * @param mixed     $user_id will be returned unless it's null.
+     * @return int
+     */
+    private static function simple_user_id($user_id) {
+        if(!$user_id) {
+            global $USER;
+            return $USER->id;
+        }
+        return $user_id;
+    }
+
+     /**
+      * Checks history capability against any one or many course id(s).
+      *
+      * @param mixed     $course_ids is a single id or array of course ids.
+      * @return bool
+      */
+    public static function can_view_history($course_ids, $user_id=null) {
+        return self::has_courses_capability('block/course_copy:history', $course_ids, $user_id);
+    }
+
+    /**
+     * The capability to push must be present on all courses that are being 
+     * touched in any given push.
+     *
+     * @param mixed     $course_ids is a single id or array of course ids.
+     * @return bool
+     */
+    public static function can_user_push($course_ids, $user_id=null) {
+        return self::has_courses_capability('block/course_copy:push', $course_ids, $user_id);
+    }
+
+    public static function has_courses_capability($cap, $courses, $only_one=false, $user_id=null) {
+        $user_id = self::simple_user_id($user_id);
+        if(is_numeric($courses)) {
+            $courses = array($courses);
+        }
+        $rval = $only_one;
+        foreach($courses as $id) {
+            $context = get_context_instance(CONTEXT_COURSE, $id);
+            $cap_result = has_capability($cap, $context, $user_id);
+        }
+        return true;
+    }
+
     public static function course_module_grade_item($cm) {
         $module = get_field('modules', 'name', 'id', $cm->module);
         return get_record_select('grade_items',

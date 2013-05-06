@@ -2,6 +2,13 @@
 
 $string['blockname'] = 'Course copy';
 $string['coursecopysettings'] = 'Course copy block settings';
+
+// Caps
+$string['course_copy:history'] = 'View course copy history';
+$string['course_copy:push'] = 'Push course module to courses';
+
+// Everything else.
+
 $string['makethiscourseamaster'] = 'Make this course a master';
 $string['makethiscourseachild'] = 'Make this course a child';
 $string['thiscourseisamaster'] = 'This course is a course copy master.';
@@ -48,3 +55,18 @@ $string['timecreated'] = 'Date created';
 $string['untouched'] = 'Untouched';
 $string['immediately'] = 'Immediately';
 $string['details'] = 'Details';
+$string['attempted'] = 'Attempted';
+$string['complete'] = 'Complete';
+$string['abandoned'] = 'Abandoned';
+$string['pushhistory'] = 'Push history';
+$string['pushdetails'] = 'Push details';
+$string['pushid'] = 'Push id';
+$string['mastercourse'] = 'Master course';
+$string['coursemodulename'] = 'Course module name';
+$string['pushhistorydetails'] = 'Push history details';
+$string['coursedeleted'] = 'Course has been deleted';
+$string['noattempthasbeenmade'] = 'None';
+$string['childcourse'] = 'Child course';
+$string['attemptsmade'] = 'Attempts made';
+$string['lastattempt'] = 'Last attempt';
+

@@ -1,4 +1,4 @@
 <?php
 
-$plugin->version = 2013011000;
+$plugin->version = 2013050300;
 $plugin->component = 'block_course_copy';

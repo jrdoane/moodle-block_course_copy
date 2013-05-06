@@ -24,6 +24,10 @@ $nav = array(
 
 print_header($title, $course->fullname, build_navigation($nav));
 
+if(!course_copy::can_view_history($course_id)) {
+    error("You do not have access to view this courses' push history.");
+}
+
 // We're only supposed to get to this page if we have a history but we need to 
 // double check anyways instead of carping without end.
 if(!$course_copy->course_has_history($course->id)) {
@@ -48,7 +52,7 @@ $table = (object)array(
 );
 $history = $course_copy->fetch_course_push_history($course->id, $perpage, $page);
 
-$table = array_reduce($history, function(&$working_table, $push) {
+foreach($history as $push) {
     $inst_struct = (object) array(
         'names' => array(),
         'completed' => 0,
@@ -90,9 +94,10 @@ $table = array_reduce($history, function(&$working_table, $push) {
     global $CFG;
     $url = new moodle_url("$CFG->wwwroot/blocks/course_copy/history/push.php");
     $url->param('id', $push->id);
+    $url->param('course_id', $course_id);
     $detail_link = "<a href=\"". $url->out() ."\">". course_copy::str('details') ."</a>";
 
-    $working_table->data[] = array(
+    $table->data[] = array(
         $detail_link,
         $source_cm_name,
         $source_course_name,
@@ -102,8 +107,7 @@ $table = array_reduce($history, function(&$working_table, $push) {
         $push->timeeffective == 0 ? course_copy::str('immediately') : userdate($push->timeeffective),
         userdate($push->timecreated)
     );
-    return $working_table;
-}, clone $table);
+}
 
 print_heading(course_copy::str('blockname'), 'center', 1);
 print_heading(course_copy::str('viewhistory') . ': ' . $course->fullname, 'center' , 2);
