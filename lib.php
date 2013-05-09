@@ -184,6 +184,33 @@ class course_copy {
     }
 
     /**
+     * Ensures that all children can be children.
+     * Example: If a course is deleted, the child should be deleted as well.
+     *
+     * @return null
+     */
+    public function ensure_relations($course_id) {
+        $this->ensure_master($course_id);
+        $this->ensure_child($course_id);
+    }
+
+    public function ensure_master($course_id) {
+        $master = get_record('block_course_copy_master', 'course_id', $course_id);
+        if(!$master) { return; }
+        if(!record_exists('course', 'id', $course_id)) {
+            $this->remove_master_by_course($course_id);
+        }
+    }
+
+    public function ensure_child($course_id) {
+        $child = get_record('block_course_copy_child', 'course_id', $course_id);
+        if(!$child) { return; }
+        if(!record_exists('course', 'id', $course_id)) {
+            $this->remove_child_by_course($course_id);
+        }
+    }
+
+    /**
      * This is true if a particular string matches more than one course module 
      * instance.
      */
