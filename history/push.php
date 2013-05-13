@@ -50,7 +50,6 @@ print_header($title, $course_name, build_navigation($nav));
 
 $master_course_name = get_field('course', 'fullname', 'id', $push->src_course_id);
 $course_module_name = course_copy::get_cm_name($push->course_module_id);
-$user = get_record('user', 'id', $push->user_id);
 $timeeffective = $push->timeeffective == 0 ? course_copy::str('immediately') : userdate($push->timeeffective);
 $timecreated = userdate($push->timecreated);
 
@@ -58,9 +57,9 @@ $push_table = new stdClass;
 $push_table->head = array(course_copy::str('pushdetails'), '');
 $push_table->data = array(
     array(course_copy::str('pushid'), $push->id),
-    array(course_copy::str('mastercourse'), $master_course_name),
+    array(course_copy::str('mastercourse'), course_copy::user_course_link($push->src_course_id)),
     array(course_copy::str('coursemodulename'), $course_module_name),
-    array(course_copy::str('issuedby'), fullname($user)),
+    array(course_copy::str('issuedby'), course_copy::user_profile_link($push->user_id)),
     array(course_copy::str('timeeffective'), $timeeffective),
     array(course_copy::str('timecreated'), $timecreated)
 );
@@ -76,25 +75,23 @@ $instance_table->head = array(
 $instance_table->data = array();
 foreach($push->instances as $i) {
     $status = course_copy::str('untouched');
-    if($i->attempts > 0) {
+    if(!$push->master_id) {
+        $status = course_copy::str('abandoned');
+    } else if ($i->attempts > 0) {
         $status = course_copy::str('attempted');
-        if(!$push->master_id) {
-            $status = course_copy::str('abandoned');
-        }
         if($i->timecompleted != 0) {
             $status = course_copy::str('complete');
         }
     }
 
     $child_course_name = get_field('course', 'fullname', 'id', $i->dest_course_id);
-    if(!$child_course_name) {
-        $child_course_name = course_copy::str('coursedeleted');
-    }
     if($i->attempts == 0) {
         $lastattempt = course_copy::str('noattempthasbeenmade');
+    } else {
+        $lastattempt = userdate($i->timemodified);
     }
     $instance_table->data[] = array(
-        $child_course_name,
+        course_copy::user_course_link($i->dest_course_id),
         $i->attempts,
         $status,
         $lastattempt

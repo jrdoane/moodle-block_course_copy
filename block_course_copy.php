@@ -32,6 +32,7 @@ class block_course_copy extends block_base {
         $option_list = array();
 
         if($COURSE->id != SITEID) {
+            $course_copy->ensure_relations($COURSE->id);
             if($course_copy->can_be_master($COURSE->id)) {
                 $make_master_str = course_copy::str('makethiscourseamaster');
                 $url = new moodle_url("{$CFG->wwwroot}/blocks/course_copy/set.php");

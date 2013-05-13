@@ -14,6 +14,50 @@ class course_copy {
     protected static $_cached_instance;
 
     /**
+     * Displays a link of a course if the current user has access to view the 
+     * course. Otherwise a plain text varient of the course name will be 
+     * presented instead.
+     *
+     * @param int       $course_id is a course.id.
+     * @return string
+     */
+
+    public static function make_link($text, $url) {
+        return '<a href="' . $url . '">' . $text . '</a>';
+    }
+
+    public static function user_course_link($course_id) {
+        global $CFG;
+        $course_name = get_field('course', 'fullname', 'id', $course_id);
+        if(!$course_name) {
+            return course_copy::str('coursedeleted');
+        }
+        if(!has_capability('moodle/course:view', get_context_instance(CONTEXT_COURSE, $course_id))) {
+            return $course_name;
+        }
+        $url = new moodle_url($CFG->wwwroot . '/course/view.php');
+        $url->param('id', $course_id);
+        return self::make_link($course_name, $url->out());
+    }
+
+    /**
+     * Displays a link to a user profile if the user has access to view the 
+     * profile. Otherwise only a string without a link will be returned.
+     *
+     * @param int       $user_id is a user.id.
+     * @return string
+     */
+    public static function user_profile_link($user_id) {
+        global $CFG;
+        if(!has_capability('moodle/user:viewdetails', get_context_instance(CONTEXT_SYSTEM))) {
+            return $name;
+        }
+        $url = new moodle_url($CFG->wwwroot . '/user/view.php');
+        $url->param('id', $user_id);
+        return self::make_link(fullname(get_record('user', 'id', $user_id)), $url->out());
+    }
+
+    /**
      * This is basically a: if null, get current user_id, otherwise user 
      * user_id. This is wrapped to protect the scope of $USER.
      *
@@ -65,7 +109,7 @@ class course_copy {
     public static function course_module_grade_item($cm) {
         $module = get_field('modules', 'name', 'id', $cm->module);
         return get_record_select('grade_items',
-            "itemid = {$cm->instance} AND itemmodule = '{$module}'"
+            "iteminstance = {$cm->instance} AND itemmodule = '{$module}'"
         );
     }
 
@@ -96,9 +140,10 @@ class course_copy {
      */
     public static function copy_grades($old_cm_id, $new_cm_id) {
         global $CFG;
-        $module = get_field('modules', 'name', 'id', $old_cm->module);
         $old_cm = get_record('course_modules', 'id', $old_cm_id);
         $new_cm = get_record('course_modules', 'id', $new_cm_id);
+        $new_gi = self::course_module_grade_item($new_cm);
+        $module = get_field('modules', 'name', 'id', $old_cm->module);
 
         $refresh_function = $module . '_grade_item_update';
         $instance = get_record($module, 'id', $new_cm->instance);
@@ -228,7 +273,7 @@ class course_copy {
      * @param object    $push_inst is the instance being attempted.
      * @return bool
      */
-    public function attempt_push($push, $push_inst) {
+    public static function attempt_push($push, $push_inst) {
         // If it's already complete, then get out.
         if($push_inst->timecompleted > 0) {
             return false;
@@ -286,9 +331,7 @@ class course_copy {
 
             // If we're copying grades, do that now.
             if (self::is_copying_grades()) {
-                if(!self::copy_grades($deprecate_cm_id, $new_cm_id)) {
-                    error("Failed to copy grades from cm ($deprecate_cm_id) to ($new_cm_id).");
-                }
+                self::copy_grades($deprecate_cm_id, $new_cm_id);
             }
         }
         return true;
@@ -377,7 +420,10 @@ class course_copy {
         if($master_course_id == $child_course_id) {
             $sql_op = ' OR ';
         }
-        $where[] = implode($sql_op, $course_where);
+
+        if(!empty($course_where)) {
+            $where[] = implode($sql_op, $course_where);
+        }
 
         if($instances) {
             $select = 'pi.*';
@@ -451,7 +497,7 @@ class course_copy {
         // as well.
         foreach($data as &$d) {
             $d->instances = array();
-            $sql = $this->fetch_push_records_sql($course_id, $course_id, $d->id, true);
+            $sql = $this->fetch_push_records_sql(false, false, $d->id, true, false);
             $inst = get_records_sql($sql);
             if($inst) {
                 $d->instances = $inst;
@@ -632,12 +678,34 @@ class course_copy {
     }
 
     public function remove_child($child_id) {
+        global $CFG;
         delete_records('block_course_copy_child', 'id', $child_id);
+        execute_sql("
+            UPDATE {$CFG->prefix}block_course_copy_push_inst
+            SET child_id = NULL
+            WHERE child_id = $child_id
+            ");
     }
 
     public function remove_master($master_id) {
         delete_records('block_course_copy_child', 'master_id', $master_id);
         delete_records('block_course_copy_master', 'id', $master_id);
+        $pushes = get_records('block_course_copy_push', 'master_id', $master_id);
+        if($pushes) {
+            $pushes = array_map(function($i) {return $i->id;}, $pushes);
+            execute_sql("
+                UPDATE {$CFG->prefix}block_course_copy_push
+                SET master_id = NULL
+                WHERE master_id = $master_id
+                ");
+            foreach($pushes as $p) {
+                execute_sql("
+                    UPDATE {$CFG->prefix}block_course_copy_push_inst
+                    SET child_id = NULL
+                    WHERE push_id = $p
+                    ");
+            }
+        }
     }
 
     public function master_has_outstanding_push($master_id) {
@@ -661,7 +729,7 @@ class course_copy {
             SELECT *
             FROM {$bp}push_inst AS pi
             JOIN {$bp}child AS c
-                ON c.id = pi.child_id
+            ON c.id = pi.child_id
             WHERE c.course_id = $course_id
             ");
     }
@@ -898,7 +966,8 @@ class course_copy {
             'iteminstance' => $instance->id,
             'itemmodule' => $module
         ));
-        $gi->locked = time();
+        $gi->locked = 1;
+        $gi->hidden = 1;
         $rval = $rval and $gi->update();
         return $rval;
     }
