@@ -124,6 +124,50 @@ class course_copy {
         $gg = new grade_grade();
         return $gg->fetch_all(array('itemid' => $gi->id));
     }
+    
+    /**
+     * This inserts/moves the contents of $after directly after $before in the 
+     * $csv. A concequence of this method is that if $before doesn't exist in 
+     * the array, then $after will be removed.
+     *
+     * @param string    $csv is a csv string.
+     * @param mixed     $before is the value to search for.
+     * @param mixed     $after is the value to put after the prior param in the
+     *                  returned csv.
+     * @return string
+     */
+    public static function csv_insert_after($csv, $before, $after) {
+        return implode(',', array_reduce(explode(',', $csv),
+            function(&$object, $item) {
+                if($item != $object->after) {
+                    $object->return[] = $item;
+                }
+                if($item == $object->before) {
+                    $object->return[] = $object->after;
+                }
+                return $object;
+            }, (object)array(
+                'before' => $before,
+                'after' => $after,
+                'return' => array()
+            ))->return);
+    }
+
+    public static function course_module_move_next_to($moving, $to) {
+        $sections = array(get_record('course_sections', 'id', $moving->section));
+        if($moving->section != $to->section) {
+            $sections[] = get_record('course_sections', 'id', $to->section);
+        }
+
+        foreach($sections as $s) {
+            $s->sequence = self::csv_insert_after($s->sequence, $to->id, $moving->id);
+            if(!update_record('course_sections', $s)) {
+                return false;
+                // This should be an exception. --jdoane
+            }
+        }
+        return true;
+    }
 
     /**
      * This method takes in two course_modules.ids as arguments with an 
@@ -138,10 +182,8 @@ class course_copy {
      * @param int       $user_id (optional) will copy a grade for a particular user.
      * @return int
      */
-    public static function copy_grades($old_cm_id, $new_cm_id) {
+    public static function copy_grades($old_cm, $new_cm) {
         global $CFG;
-        $old_cm = get_record('course_modules', 'id', $old_cm_id);
-        $new_cm = get_record('course_modules', 'id', $new_cm_id);
         $new_gi = self::course_module_grade_item($new_cm);
         $module = get_field('modules', 'name', 'id', $old_cm->module);
 
@@ -321,6 +363,7 @@ class course_copy {
             // Make this course module not visible and alter the name.
             if(!self::deprecate_course_module($deprecate_cm_id)) {
                 error('Unable to deprecate a course module.');
+                // Make this an exception. We want to handle exception in cron.
             }
 
             // At this point the old course module's name has been changed but 
@@ -329,11 +372,16 @@ class course_copy {
             // with just the course module we just created.
             $new_cm_id = self::match_course_module($source_cm_id, $dest_course);
 
+            $old_cm = get_record('course_modules', 'id', $deprecate_cm_id);
+            $new_cm = get_record('course_modules', 'id', $new_cm_id);
+
             // If we're copying grades, do that now.
             if (self::is_copying_grades()) {
-                self::copy_grades($deprecate_cm_id, $new_cm_id);
+                self::copy_grades($old_cm, $new_cm);
             }
+            self::course_module_move_next_to($new_cm, $old_cm);
         }
+        rebuild_course_cache($dest_course);
         return true;
     }
 
@@ -491,7 +539,7 @@ class course_copy {
      * opposed to one or the other. This is also fairly easy to query.
      */
     public function fetch_course_push_history($course_id, $limit=0, $offset=0) {
-        $sql = $this->fetch_push_records_sql($course_id, $course_id);
+        $sql = $this->fetch_push_records_sql($course_id, $course_id, false, false, false);
         $data = get_records_sql($sql, $offset, $limit);
         // Almost there, we want all the push_inst records to be included here 
         // as well.
@@ -968,6 +1016,7 @@ class course_copy {
         ));
         $gi->locked = 1;
         $gi->hidden = 1;
+        $gi->itemname = $instance->name; // Grrr... Moodle denormalization. :< --jdoane 20130513
         $rval = $rval and $gi->update();
         return $rval;
     }
