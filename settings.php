@@ -16,3 +16,8 @@ $settings->add(new admin_setting_configcheckbox('block_course_copy_replace',
   course_copy::str('replace'),
   course_copy::str('replacedescription'), '0', '1', '0'
 ));
+
+$settings->add(new admin_setting_configtext('block_course_copy_cron_timeout',
+    course_copy::str('crontimeout'),
+    course_copy::str('crontimeoutdescription'), 5, PARAM_INT
+));

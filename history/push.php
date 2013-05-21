@@ -8,7 +8,7 @@ $title = course_copy::str('pushhistory');
 $course_name = $title;
 
 $push = get_record('block_course_copy_push', 'id', $push_id);
-$push->instances = get_records('block_course_copy_push_inst', 'push_id', $push_id);
+$push->instances = get_records('block_course_copy_push_inst', 'push_id', $push_id, 'dest_course_id ASC');
 
 $impacted_classrooms = array($push->src_course_id);
 array_reduce($push->instances, function(&$working, $item) {

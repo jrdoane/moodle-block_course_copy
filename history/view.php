@@ -50,7 +50,16 @@ $table = (object)array(
     ),
     'data' => array(),
 );
+
 $history = $course_copy->fetch_course_push_history($course->id, $perpage, $page);
+foreach($history as &$h) {
+    usort($h->instances, function($a, $b) {
+        if($a->dest_course_id == $b->dest_course_id) {
+            return 0;
+        }
+        return $a->dest_course_id > $b->dest_course_id ? 1 : -1;
+    });
+}
 
 foreach($history as $push) {
     $inst_struct = (object) array(

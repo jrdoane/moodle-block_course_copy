@@ -264,10 +264,79 @@ class course_copy {
             ");
     }
 
+    /**
+     * We need this wrapper because we're violating scope when we use the $db 
+     * global variable. We need this because execute_sql doesn't tell us enough. 
+     * We need to know exactly how many records were updated.
+     */
+    public static function db_update_sql($sql) {
+        global $db;
+        $rs = $db->Execute($sql);
+        if($rs) {
+            if($db->Affected_Rows() > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * This is a really cool method that takes a push_instance record and 
+     * a closure and locks a push_instance for the duration of the closure.
+     */
+    public static function aquire_push_instance_lock($push_instance, $function) {
+        global $CFG;
+        // We have a push instance! First thing is first, lets attempt to lock 
+        // the instance. If we fail to update the record, we failed to get the 
+        // lock.
+        $locked = self::db_update_sql("
+            UPDATE {$CFG->prefix}block_course_copy_push_inst
+            SET isprocessing = 1
+            WHERE id = {$push_instance->id} AND isprocessing = 0
+            ");
+        $push_instance->isprocessing = 1; // Don't fetch it again just for this.
+
+        if($locked) {
+            // We're in business. Let's run the closure then give the lock back.
+            // We're not passing anything in, we're "use"ing data where the 
+            // closure is defined.
+            $function($push_instance);
+        } else {
+            return false;
+        }
+        if(!update_record('block_course_copy_push_inst', (object)array(
+            'id' => $push_instance->id,
+            'isprocessing' => 0
+        ))) {
+            throw new Exception("Unable for forfit push_instance lock ({$push_instance->id}).");
+        }
+        return true;
+    }
+
     public function cron() {
-        // We want to check to see if any pending pushes are ready to be 
-        // processed. If they are we need to process them, if not we have to 
-        // update them to say we've seen it and that it isn't ready.
+        $push_instances = get_records_sql(self::fetch_push_records_sql(false, false, false, true, true));
+        $timeout = self::cron_timeout_fromnow();
+        $rval = true;
+
+        if(!$push_instances) {
+            return true;
+        }
+
+        foreach($push_instances as $push_instance) {
+        // Attempt a push inside a push_instance lock.
+            $rval = $rval and self::aquire_push_instance_lock($push_instance,
+                function($push_instance) {
+                    $push = get_record('block_course_copy_push', 'id', $push_instance->push_id);
+                    return course_copy::attempt_push($push, $push_instance);
+                });
+
+            if(time() > $timeout) {
+                print "[block_course_copy] Cron time limit exceeded. Giving up until next time.\n";
+                break;
+            }
+
+        }
+        return $rval;
     }
 
     /**
@@ -395,6 +464,19 @@ class course_copy {
     }
 
     /**
+     * Thanks to MySQL we have to do some absurdity when using "DISTINCT". 
+     * Apparently you can't do something like "SELECT DISTINCT x.*" in MySQL.
+     */
+    public static function push_fields() {
+    }
+
+    /**
+     * More absurdity. See @push_fields()
+     */
+    public static function push_instance_fields() {
+    }
+
+    /**
      * This method is some crazyness that can get you just about any push or 
      * push instance that you could ever want.
      *
@@ -410,7 +492,7 @@ class course_copy {
         $push_id=false, $instances=false, $pending=true, $count=false)
     {
         $p = self::db_table_prefix();
-        $left = 'LEFT';
+        $group_by = 'GROUP BY p.*';
         $select = 'p.*';
         $now = time();
         $where = array();
@@ -475,7 +557,7 @@ class course_copy {
 
         if($instances) {
             $select = 'pi.*';
-            $left = '';
+            $group_by = '';
         }
 
         $where = implode(' AND ', $where);
@@ -489,9 +571,9 @@ class course_copy {
         }
 
         $sql = "
-            SELECT {$select}
+            SELECT DISTINCT {$select}
             FROM {$p}push AS p
-            {$left} JOIN {$p}push_inst AS pi
+            JOIN {$p}push_inst AS pi
                 ON pi.push_id = p.id AND
                 pi.child_id IS NOT NULL
             {$child_master_join}
@@ -958,13 +1040,16 @@ class course_copy {
 
     public static function match_course_module($src_cm_id, $dest_course_id) {
         $base_name = self::simplify_name(self::get_cm_name($src_cm_id));
+        $src_cm = get_record('course_modules', 'id', $src_cm_id);
         $course_modules = get_records('course_modules', 'course', $dest_course_id, '', 'id, module, instance');
         if(!$course_modules) {
             return false;
         }
         foreach($course_modules as $cm) {
             if($base_name == self::simplify_name(self::get_cm_name($cm->id))) {
-                return $cm->id;
+                if($src_cm->module == $cm->module) {
+                    return $cm->id;
+                }
             }
         }
 
@@ -1027,6 +1112,15 @@ class course_copy {
 
     public static function is_replacing() {
         return get_config(null, 'block_course_copy_replace');
+    }
+
+    public static function cron_timeout_fromnow() {
+        $value = get_config(null, 'block_course_copy_cron_timeout');
+        $time = time();
+        if(!$value) {
+            return $time;
+        }
+        return $time + (60 * $value);
     }
 
     /**
