@@ -468,12 +468,33 @@ class course_copy {
      * Apparently you can't do something like "SELECT DISTINCT x.*" in MySQL.
      */
     public static function push_fields() {
+        return array(
+            'id',
+            'master_id',
+            'src_course_id',
+            'course_module_id',
+            'user_id',
+            'description',
+            'timeeffective',
+            'timecreated'
+        );
     }
 
     /**
      * More absurdity. See @push_fields()
      */
     public static function push_instance_fields() {
+        return array(
+            'id',
+            'push_id',
+            'child_id',
+            'dest_course_id',
+            'attempts',
+            'timecompleted',
+            'timemodified',
+            'timecreated',
+            'isprocessing'
+        );
     }
 
     /**
@@ -492,8 +513,8 @@ class course_copy {
         $push_id=false, $instances=false, $pending=true, $count=false)
     {
         $p = self::db_table_prefix();
-        $group_by = 'GROUP BY p.*';
-        $select = 'p.*';
+        $select = '';
+        $order_by = '';
         $now = time();
         $where = array();
         $child_table_field = 'c.course_id';
@@ -556,8 +577,22 @@ class course_copy {
         }
 
         if($instances) {
-            $select = 'pi.*';
-            $group_by = '';
+            $fields = self::push_instance_fields();
+            $alias = 'pi';
+        } else {
+            $fields = self::push_fields();
+            $alias = 'p';
+        }
+
+        if($count) {
+            $fields = array(array_shift($fields));
+        }
+
+        $select = implode(', ', array_map(function($i) use ($alias) { return "{$alias}.{$i}"; }, $fields));
+        $group_by = "GROUP BY $select";
+
+        if($count) {
+            $select = "COUNT({$select})";
         }
 
         $where = implode(' AND ', $where);
@@ -566,18 +601,15 @@ class course_copy {
             $where = 'WHERE ' . $where;
         }
 
-        if($count) {
-            $select = "COUNT({$select})";
-        }
-
         $sql = "
-            SELECT DISTINCT {$select}
+            SELECT {$select}
             FROM {$p}push AS p
             JOIN {$p}push_inst AS pi
                 ON pi.push_id = p.id AND
                 pi.child_id IS NOT NULL
             {$child_master_join}
             $where
+            $group_by
             ";
 
         return $sql;

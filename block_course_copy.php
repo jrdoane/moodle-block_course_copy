@@ -36,56 +36,60 @@ class block_course_copy extends block_base {
         $option_list = array();
 
         if($COURSE->id != SITEID) {
-            $course_copy->ensure_relations($COURSE->id);
-            if($course_copy->can_be_master($COURSE->id) and !$course_copy->plugin_manages_masters()) {
-                $set_url->param('master', 1);
-                $set_url->param('course_id', $COURSE->id);
-                $option_list[] = course_copy::make_link(course_copy::str('makethiscourseamaster'), $set_url->out());
-                $set_url->remove_params();
-            }
-
-            if($course_copy->can_be_child($COURSE->id) and !$course_copy->plugin_manages_children()) {
-                $set_url->param('create_child', 1);
-                $set_url->param('course_id', $COURSE->id);
-                $option_list[] = course_copy::make_link(course_copy::str('makethiscourseachild'), $set_url->out());
-                $set_url->remove_params();
-            }
-
-            if($course_copy->is_master($COURSE->id)) {
-                $this->content->text .= course_copy::str('thiscourseisamaster') . '<br /><br />';
-
-                if($course_copy->master_has_children_by_course($COURSE->id)) {
-                    $url = new moodle_url("{$base_url}/push.php");
-                    $url->param('master_course_id', $COURSE->id);
-                    $option_list[] = course_copy::make_link(course_copy::str('pushcoursemodule'), $url->out());
-                } else {
-                    $this->content->text .= course_copy::str('masterhasnochildren') .'<br /><br />';
+            if(course_copy::can_user_push($COURSE->id)) {
+                $course_copy->ensure_relations($COURSE->id);
+                if($course_copy->can_be_master($COURSE->id) and !$course_copy->plugin_manages_masters()) {
+                    $set_url->param('master', 1);
+                    $set_url->param('course_id', $COURSE->id);
+                    $option_list[] = course_copy::make_link(course_copy::str('makethiscourseamaster'), $set_url->out());
+                    $set_url->remove_params();
                 }
 
-                if(!$course_copy->plugin_manages_masters()) {
-                    $remove_url->param('master', 1);
-                    $remove_url->param('course_id', $COURSE->id);
-                    $option_list[] = course_copy::make_link(course_copy::str('relinquishmasterstatus'), $remove_url->out());
-                    $remove_url->remove_params();
+                if($course_copy->can_be_child($COURSE->id) and !$course_copy->plugin_manages_children()) {
+                    $set_url->param('create_child', 1);
+                    $set_url->param('course_id', $COURSE->id);
+                    $option_list[] = course_copy::make_link(course_copy::str('makethiscourseachild'), $set_url->out());
+                    $set_url->remove_params();
+                }
+
+                if($course_copy->is_master($COURSE->id)) {
+                    $this->content->text .= course_copy::str('thiscourseisamaster') . '<br /><br />';
+
+                    if($course_copy->master_has_children_by_course($COURSE->id)) {
+                        $url = new moodle_url("{$base_url}/push.php");
+                        $url->param('master_course_id', $COURSE->id);
+                        $option_list[] = course_copy::make_link(course_copy::str('pushcoursemodule'), $url->out());
+                    } else {
+                        $this->content->text .= course_copy::str('masterhasnochildren') .'<br /><br />';
+                    }
+
+                    if(!$course_copy->plugin_manages_masters()) {
+                        $remove_url->param('master', 1);
+                        $remove_url->param('course_id', $COURSE->id);
+                        $option_list[] = course_copy::make_link(course_copy::str('relinquishmasterstatus'), $remove_url->out());
+                        $remove_url->remove_params();
+                    }
+                }
+
+                if($course_copy->is_child($COURSE->id)) {
+                    $master = $course_copy->get_master_course_by_child_course_id($COURSE->id);
+                    $this->content->text .= course_copy::str('thiscourseisachildof') . " {$master->fullname}<br /><br />";
+
+                    if(!$course_copy->plugin_manages_children()) {
+                        $remove_url->param('child', 1);
+                        $remove_url->param('course_id', $COURSE->id);
+                        $option_list[] = course_copy::make_link(course_copy::str('relinquishchildstatus'), $url->out());
+                        $remove_url->remove_params();
+                    }
                 }
             }
 
-            if($course_copy->is_child($COURSE->id)) {
-                $master = $course_copy->get_master_course_by_child_course_id($COURSE->id);
-                $this->content->text .= course_copy::str('thiscourseisachildof') . " {$master->fullname}<br /><br />";
-
-                if(!$course_copy->plugin_manages_children()) {
-                    $remove_url->param('child', 1);
-                    $remove_url->param('course_id', $COURSE->id);
-                    $option_list[] = course_copy::make_link(course_copy::str('relinquishchildstatus'), $url->out());
-                    $remove_url->remove_params();
+            if(course_copy::can_view_history($COURSE->id)) {
+                if ($course_copy->course_has_history($COURSE->id)) {
+                    $url = new moodle_url("{$base_url}/history/view.php");
+                    $url->param('course_id', $COURSE->id);
+                    $option_list[] = course_copy::make_link(course_copy::str('viewhistory'), $url->out());
                 }
-            }
-
-            if ($course_copy->course_has_history($COURSE->id)) {
-                $url = new moodle_url("{$base_url}/history/view.php");
-                $url->param('course_id', $COURSE->id);
-                $option_list[] = course_copy::make_link(course_copy::str('viewhistory'), $url->out());
             }
         }
 
