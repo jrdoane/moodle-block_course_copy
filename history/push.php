@@ -75,13 +75,20 @@ $instance_table->head = array(
 $instance_table->data = array();
 foreach($push->instances as $i) {
     $status = course_copy::str('untouched');
-    if(!$push->master_id) {
+    if($i->timecompleted > 0) {
+        $status = course_copy::str('complete');
+    } else if(!$push->master_id or !$i->child_id) {
         $status = course_copy::str('abandoned');
     } else if ($i->attempts > 0) {
         $status = course_copy::str('attempted');
-        if($i->timecompleted != 0) {
-            $status = course_copy::str('complete');
-        }
+    }
+
+    if($push->master_id and $i->child_id and $i->timecompleted == 0) {
+        $abandon_push_url = new moodle_url("$CFG->wwwroot/blocks/course_copy/abandon.php");
+        $abandon_push_url->param('push_inst_id', $i->id);
+        $abandon_push_url->param('return', qualified_me());
+        $str = course_copy::str('abandonthispush');
+        $status .= "<br /><a href=\"" . $abandon_push_url->out() . "\">{$str}</a>";
     }
 
     $child_course_name = get_field('course', 'fullname', 'id', $i->dest_course_id);

@@ -1,5 +1,6 @@
 <?php
 require_once(dirname(dirname(__FILE__)) . '/lib.php');
+global $CFG;
 $course_copy    = course_copy::create();
 $course_id      = required_param('course_id', PARAM_INT);
 $page           = optional_param('page', 0, PARAM_INT);
@@ -99,8 +100,15 @@ foreach($history as $push) {
             $status = course_copy::str('complete');
         }
     }
+    if($push->master_id and ($idata->completed + $idata->abandoned) < count($push->instances)) {
+        $abandon_push_url = new moodle_url("$CFG->wwwroot/blocks/course_copy/abandon.php");
+        $abandon_push_url->param('push_id', $push->id);
+        $abandon_push_url->param('return', qualified_me());
+        $str = course_copy::str('abandonthispush');
+        $status .= "<br /><a href=\"" . $abandon_push_url->out() . "\">{$str}</a>";
+    }
 
-    global $CFG;
+
     $url = new moodle_url("$CFG->wwwroot/blocks/course_copy/history/push.php");
     $url->param('id', $push->id);
     $url->param('course_id', $course_id);

@@ -904,6 +904,20 @@ class course_copy {
         return $this->master_has_children(get_field('block_course_copy_master', 'id', 'course_id', $course_id));
     }
 
+    public static function abandon_push($push_id) {
+        return update_record('block_course_copy_push', (object) array(
+            'id' => $push_id,
+            'master_id' => 0
+        ));
+    }
+
+    public static function abandon_push_instance($push_inst_id) {
+        return update_record('block_course_copy_push_inst', (object) array(
+            'id' => $push_inst_id,
+            'child_id' => 0
+        ));
+    }
+
     /**
      * When a plugin overrides this and returns true, it will not give a capable 
      * user the option to add children since the plugin will be expected to manage
