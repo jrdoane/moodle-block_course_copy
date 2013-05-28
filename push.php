@@ -8,6 +8,8 @@ $master_id = get_field('block_course_copy_master', 'id', 'course_id', $master_co
 $url = new moodle_url(qualified_me());
 $url->param('master_course_id', $master_course_id);
 $form = new block_course_copy_create_push($url, $master_course_id);
+$history_url = new moodle_url("{$CFG->wwwroot}/blocks/course_copy/history/view.php");
+$history_url->param('course_id', $master_course_id);
 $course_url = new moodle_url("{$CFG->wwwroot}/course/view.php");
 $course_url->param('id', $master_course_id);
 
@@ -48,7 +50,7 @@ if($data = $form->get_data()) {
         }
     }
 
-    redirect($course_url->out());
+    redirect($history_url->out());
 }
 
 $nav = array(

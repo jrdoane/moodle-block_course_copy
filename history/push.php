@@ -75,7 +75,9 @@ $instance_table->head = array(
 $instance_table->data = array();
 foreach($push->instances as $i) {
     $status = course_copy::str('untouched');
-    if($i->timecompleted > 0) {
+    if ($i->isprocessing) {
+        $status = course_copy::str('locked');
+    } else if($i->timecompleted > 0) {
         $status = course_copy::str('complete');
     } else if(!$push->master_id or !$i->child_id) {
         $status = course_copy::str('abandoned');
