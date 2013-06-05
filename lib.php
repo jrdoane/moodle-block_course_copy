@@ -11,7 +11,8 @@ require_once("{$CFG->dirroot}/lib/xmlize.php");
  */
 class course_copy {
 
-    protected static $_cached_instance;
+    private static $_cached_instance;
+    private static $_cached_cm_instances;
 
     /**
      * Displays a link of a course if the current user has access to view the 
@@ -371,6 +372,7 @@ class course_copy {
      * instance.
      */
     public static function course_module_matches_many($push, $push_inst) {
+        self::precache_course_cm_instances($push_inst->dest_course_id);
         if (self::match_course_module($push->course_module_id, $push_inst->dest_course_id) === null) {
             return true;
         }
@@ -401,7 +403,7 @@ class course_copy {
         // is no reason why it shouldn't unless $push_inst is bad.
         update_record('block_course_copy_push_inst', $push_inst);
         $source_cm_id = $push->course_module_id;
-        $source_cm_name = self::get_cm_name($source_cm_id);
+        $source_cm_name = self::get_cached_cm_instance($source_cm_id, 'name');
         $dest_course = $push_inst->dest_course_id;
         $replace = self::is_replacing();
         $deprecate_cm_id = null;
@@ -413,7 +415,7 @@ class course_copy {
         // can update it and we want to run the requirement_check on it to make 
         // sure it's ready to be replaced.
         if($deprecate_cm_id) {
-            $deprecate_cm_name = self::get_cm_name($deprecate_cm_id);
+            $deprecate_cm_name = self::get_cached_cm_instance($deprecate_cm_id, 'name');
             $check = course_copy_requirement_check::check_course_module($deprecate_cm_id);
             if(!$check->passed()) {
                 return false;
@@ -463,38 +465,182 @@ class course_copy {
             WHERE pi.id = $push_inst_id");
     }
 
-    /**
-     * Thanks to MySQL we have to do some absurdity when using "DISTINCT". 
-     * Apparently you can't do something like "SELECT DISTINCT x.*" in MySQL.
-     */
-    public static function push_fields() {
-        return array(
-            'id',
-            'master_id',
-            'src_course_id',
-            'course_module_id',
-            'user_id',
-            'description',
-            'timeeffective',
-            'timecreated'
-        );
+    public static function sql_table_def($table = false, $tidbit = false) {
+        $p = self::db_table_prefix();
+        static $lookup;
+        if(empty($lookup)) {
+            $lookup = array(
+                'push' => array(
+                    'alias' => 'p',
+                    'fullname' => "{$p}push",
+                    'fields' => array(
+                        'id',
+                        'master_id',
+                        'src_course_id',
+                        'course_module_id',
+                        'user_id',
+                        'description',
+                        'timeeffective',
+                        'timecreated'
+                    )
+                ),
+                'push_inst' => array(
+                    'alias' => 'pi',
+                    'fullname' => "{$p}push_inst",
+                    'fields' => array(
+                        'id',
+                        'push_id',
+                        'child_id',
+                        'dest_course_id',
+                        'attempts',
+                        'timecompleted',
+                        'timemodified',
+                        'timecreated',
+                        'isprocessing'
+                    )
+                ),
+                'master' => array(
+                    'alias' => 'm',
+                    'fullname' => "{$p}master",
+                    'fields' => array(
+                        'id',
+                        'course_id',
+                        'timecreated',
+                        'timemodified'
+                    )
+                ),
+                'child' => array(
+                    'alias' => 'c',
+                    'fullname' => "{$p}child",
+                    'fields' => array(
+                        'id',
+                        'master_id',
+                        'course_id',
+                        'timecreated',
+                        'timemodified'
+                    )
+                )
+            );
+        }
+
+        if($table) {
+            return $lookup[$table];
+            if($tidbit) {
+                return $lookup[$table][$tidbit];
+            }
+        }
+        return $lookup;
+    }
+
+    public static function sql_partial_def($field) {
+        return array_map(function($i) use ($field) { return $i[$field]; }, course_copy::sql_table_def());
     }
 
     /**
-     * More absurdity. See @push_fields()
+     * Uses the table definition to give an array of fields prepended with the 
+     * table alias.
      */
-    public static function push_instance_fields() {
-        return array(
-            'id',
-            'push_id',
-            'child_id',
-            'dest_course_id',
-            'attempts',
-            'timecompleted',
-            'timemodified',
-            'timecreated',
-            'isprocessing'
-        );
+    public static function sql_select_as($tdef) {
+        return array_map(function($v) use ($tdef) { return course_copy::sql_alias($tdef, $v); }, $tdef['fields']);
+    }
+
+    /**
+     * This has been generalized. We want to use sql_select_as() to use the 
+     * appropriate aliases as opposed to using them here. That was this can 
+     * still build a select that consists of multiple tables.
+     *
+     * Note: Like moodle get_record, the first field is used for counting and PK.
+     * 
+     * @param int       $fields is an array of strings that represent table fields.
+     *                  Fields must express their context (ex. p.src_course_id)
+     * @param bool      $count will count the records using one field instead of all.
+     * @return string
+     */
+    public static function sql_select($fields, $count = false) {
+        if($count) { $fields = array(array_shift($fields)); }
+            return 'SELECT ' . implode(', ', $fields);
+    }
+
+    public static function sql_from($pending) {
+        $names = self::sql_partial_def('fullname');
+        $aliases = self::sql_partial_def('alias');
+        $partial = "
+            FROM {$names['push']} AS {$aliases['push']}
+            JOIN {$names['push_inst']} AS {$aliases['push_inst']}
+            ON {$aliases['push_inst']}.push_id = {$aliases['push']}.id
+    ";
+        if($pending) {
+            $partial .= "
+            JOIN {$names['master']} AS {$aliases['master']}
+                ON {$aliases['master']}.id = {$aliases['push']}.master_id
+            JOIN {$names['child']} AS {$aliases['child']}
+                ON {$aliases['child']}.id = {$aliases['push_inst']}.child_id
+            ";
+        }
+        return $partial;
+    }
+
+    /**
+     * Takes an array ($fvp), and where-ifies the data. Embed will wrap the 
+     * output in parens and with is the SQL keyword to concat the comparisons 
+     * together with. If the comparator is empty, all the elements are combined 
+     * together using the SQL keyword in the "WITH" statement.
+     */
+    public static function sql_where($fvp, $embed = false, $with = 'AND', $comparator = '=') {
+        $ou = array();
+        foreach($fvp as $key => $value) {
+            if(is_array($value) and empty($comparator)) {
+                foreach($value as $nval) {
+                    $ou[] = self::sql_compare($key, $comparator, $nval);
+                }
+            } else {
+                if(!empty($comparator)) {
+                    $ou[] = self::sql_compare($key, $comparator, $value);
+                } else {
+                    $ou = $value; // Assume the string results in a SQL bool.
+                }
+            }
+        }
+        $ou = implode(" {$with} ", $ou);
+        return $embed ? self::sql_where_embed($ou) : self::sql_where_base($ou);
+    }
+
+    public static function sql_compare($field, $comparator, $value) {
+        return "{$field} {$comparator} {$value}";
+    }
+
+    /**
+     * Wrap where string in parens since it's most likely going to be AND'ed 
+     * with other things.
+     */
+    public static function sql_where_embed($string) {
+        return " ({$string}) ";
+    }
+
+    public static function sql_where_base($string) {
+        return " WHERE {$string} ";
+    }
+
+    public static function sql_alias($def, $field) {
+        return $def['alias'] . '.' . $field;
+    }
+
+    /**
+     * 
+     */
+    public function sql_group_by($fields) {
+        if(empty($fields)) {
+            return '';
+        }
+        return "GROUP BY " . implode(', ', $fields);
+    }
+
+    public function sql_fetch_push($push_id, $instances=false) {
+        $td = self::sql_table_def($instances ? 'push_inst' : 'push');
+        return self::sql_select(self::sql_select_as($td))
+            . self::sql_from(false)
+            . self::sql_where(array(self::sql_alias($td, 'id') => $push_id))
+            . self::sql_group_by(self::sql_select_as($td));
     }
 
     /**
@@ -527,6 +673,8 @@ class course_copy {
          * in push or push_inst, it should NEVER BE PENDING! In fact if it 
          * hasn't been completed, in this state it is abandoned.
          */
+
+        $sql_body = $this->sql_fetch_tables($pending);
         $child_master_join = "
             JOIN {$p}master AS m
                 ON m.id = p.master_id
@@ -576,19 +724,6 @@ class course_copy {
             $where[] = implode($sql_op, $course_where);
         }
 
-        if($instances) {
-            $fields = self::push_instance_fields();
-            $alias = 'pi';
-        } else {
-            $fields = self::push_fields();
-            $alias = 'p';
-        }
-
-        if($count) {
-            $fields = array(array_shift($fields));
-        }
-
-        $select = implode(', ', array_map(function($i) use ($alias) { return "{$alias}.{$i}"; }, $fields));
         $group_by = "GROUP BY $select";
 
         if($count) {
@@ -617,7 +752,12 @@ class course_copy {
     }
 
     public function fetch_pending_pushes_by_child_course($course_id=null, $limit=0, $offset=0) {
-        $sql = $this->fetch_push_records_sql($course_id);
+        $pdef = self::sql_table_def('push');
+        $pidef = self::sql_table_def('push_inst');
+        $sql = self::sql_select(self::sql_select_as($pdef))
+            . self::sql_from(true)
+            . self::sql_where(array(self::sql_alias($pidef, 'dest_course_id') => $course_id))
+            . self::sql_group_by(self::sql_select_as($pdef));
         return get_records_sql($sql, $offset, $limit);
     }
 
@@ -636,9 +776,12 @@ class course_copy {
         return count_records_sql($sql);
     }
 
-    public function fetch_pending_push_instances($push_id, $course_id=null, $limit=0, $offset=0) {
-        $sql = $this->fetch_push_records_sql($course_id, false, $push_id, true);
-        return get_records_sql($sql, $offset, $limit);
+    public function fetch_push_instances($push_id, $pending = false) {
+        $defs = self::sql_table_def();
+        $sql = self::sql_select(self::sql_select_as($defs['push_inst']))
+            . self::sql_from($pending)
+            . self::sql_where(array(self::sql_alias($defs['push'], 'id') => $push_id));
+        return get_records_sql($sql);
     }
 
     public function course_has_history($course_id) {
@@ -653,14 +796,23 @@ class course_copy {
      * opposed to one or the other. This is also fairly easy to query.
      */
     public function fetch_course_push_history($course_id, $limit=0, $offset=0) {
-        $sql = $this->fetch_push_records_sql($course_id, $course_id, false, false, false);
+        $defs = self::sql_table_def();
+
+        $sql = self::sql_select(self::sql_select_as($defs['push']))
+            . self::sql_from(false)
+            . self::sql_where(array(
+                self::sql_alias($defs['push'], 'src_course_id') => $course_id,
+                self::sql_alias($defs['push_inst'], 'dest_course_id') => $course_id
+            ), false, 'OR')
+            . self::sql_group_by(self::sql_select_as($defs['push']));
+
+
         $data = get_records_sql($sql, $offset, $limit);
         // Almost there, we want all the push_inst records to be included here 
         // as well.
         foreach($data as &$d) {
             $d->instances = array();
-            $sql = $this->fetch_push_records_sql(false, false, $d->id, true, false);
-            $inst = get_records_sql($sql);
+            $inst = get_records('block_course_copy_push_inst', 'push_id', $d->id);
             if($inst) {
                 $d->instances = $inst;
             }
@@ -1085,43 +1237,121 @@ class course_copy {
     }
 
     public static function match_course_module($src_cm_id, $dest_course_id) {
-        $base_name = self::simplify_name(self::get_cm_name($src_cm_id));
-        $src_cm = get_record('course_modules', 'id', $src_cm_id);
-        $course_modules = get_records('course_modules', 'course', $dest_course_id, '', 'id, module, instance');
-        if(!$course_modules) {
+        static $cm_cache;
+        static $result_cache;
+        $key = $src_cm_id . ':' . $dest_course_id;
+
+        if(empty($cm_cache)) {
+            $cm_cache = array();
+        }
+        if(empty($result_cache)) {
+            $result_cache = array();
+        }
+
+        if(isset($result_cache[$key])) {
+            return $result_cache[$key];
+        }
+        $base_name = self::simplify_name(self::get_cached_cm_instance($src_cm_id, 'name'));
+
+        if(empty($cm_cache[$dest_course_id])) {
+            $cm_cache[$dest_course_id] = get_records('course_modules', 'course', $dest_course_id, '', 'id, module, instance');
+        }
+        if(!$cm_cache[$dest_course_id]) {
             return false;
         }
-        foreach($course_modules as $cm) {
-            if($base_name == self::simplify_name(self::get_cm_name($cm->id))) {
+        $src_cm = self::get_cached_cm($src_cm_id);
+
+        foreach($cm_cache[$dest_course_id] as $cm) {
+            if($base_name == self::simplify_name(self::get_cached_cm_instance($cm->id, 'name'))) {
                 if($src_cm->module == $cm->module) {
-                    return $cm->id;
+                    $result_cache[$key] = $cm->id;
+                    return $result_cache[$key];
                 }
             }
         }
 
-        return false;
+        $result_cache[$key] = false;
+        return $result_cache[$key];
     }
 
     public static function simplify_name($str) {
         return strtolower(preg_replace('/\s/', '', $str));
     }
 
-    /**
-     * We want to keep this as minimal as possible.
-     */
-    public static function get_cm_name($cm) {
-        return self::get_cm_instance($cm, 'name');
+    public static function precache_course_cm_instances($course_id) {
+        global $CFG;
+        static $has_run;
+
+        if(empty($has_run)) {
+            $has_run = array();
+        }
+
+        if(!empty($has_run[$course_id])) {
+            return;
+        }
+
+        $modules = get_records_sql("
+            SELECT m.id, m.name FROM {$CFG->prefix}modules AS m
+            JOIN {$CFG->prefix}course_modules AS cm
+                ON m.id = cm.module
+            WHERE cm.course = $course_id
+            GROUP BY m.id, m.name
+        ");
+
+        foreach($modules as $m) {
+            $cms = get_records_sql("
+                SELECT cm.id AS course_module_id, mb.id, mb.name
+                FROM {$CFG->prefix}{$m->name} AS mb
+                JOIN {$CFG->prefix}course_modules AS cm
+                ON mb.id = cm.instance
+                WHERE cm.module = {$m->id} AND cm.course = {$course_id}
+                ");
+            foreach($cms as $i) {
+                self::$_cached_cm_instances[$i->course_module_id] = $i;
+            }
+        }
+
+        $has_run[$course_id] = true;
     }
 
-    public static function get_cm_instance($cm, $field=false) {
-        if(is_numeric($cm)) {
-            $cm = get_record('course_modules', 'id', $cm);
+    public static function get_cached_cm_instance($cm, $field=false) {
+        $id = is_object($cm) ? $cm->id : $cm;
+        if(empty(self::$_cached_cm_instances)) {
+            self::$_cached_cm_instances = array();
         }
-        $module_name = get_field('modules', 'name', 'id', $cm->module);
+        if(empty(self::$_cached_cm_instances[$id])) {
+            if(!is_object($cm)) {
+                $cm = self::get_cached_cm($id);
+            }
+            $module_name = self::get_cached_module_name($cm->module);
+            self::$_cached_cm_instances[$cm->id] = get_record($module_name, 'id', $cm->instance);
+        }
         if($field) {
-            return get_field($module_name, $field, 'id', $cm->instance);
+            return self::$_cached_cm_instances[$id]->$field;
         }
-        return get_record($module_name, 'id', $cm->instance);
+        return self::$_cached_cm_instances[$id];
+    }
+
+    public static function get_cached_cm($cm_id) {
+        static $cache;
+        if(!is_array($cache)) {
+            $cache = array();
+        }
+        if(!isset($cache[$cm_id])) {
+            $cache[$cm_id] = get_record('course_modules', 'id', $cm_id);
+        }
+        return $cache[$cm_id];
+    }
+
+    public static function get_cached_module_name($id) {
+        static $cache;
+        if(!is_array($cache)) {
+            $cache = array();
+        }
+        if(!isset($cache[$id])) {
+            $cache[$id] = get_field('modules', 'name', 'id', $id);
+        }
+        return $cache[$id];
     }
 
     public static function deprecate_course_module($cm_id) {
@@ -1392,7 +1622,7 @@ class block_course_copy_create_push extends moodleform {
         $form->addGroup($radio_cm_group, 'cm_group', '', '<br />', false);
 
         $form->addElement('submit', 'submit', course_copy::str('pushassessment'));
- 
+
     }
 }
 

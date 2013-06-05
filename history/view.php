@@ -87,7 +87,7 @@ foreach($history as $push) {
         return $instance_data;
     }, clone $inst_struct);
 
-    $source_cm_name = course_copy::get_cm_name($push->course_module_id);
+    $source_cm_name = course_copy::get_cached_cm_instance($push->course_module_id, 'name');
     $source_course_name = get_field('course', 'fullname', 'id', $push->src_course_id);
     $user = get_record('user', 'id', $push->user_id, '', '', '', '', 'id, firstname, lastname');
     $status = course_copy::str('untouched');

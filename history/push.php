@@ -49,7 +49,7 @@ $nav[] = array('name' => course_copy::str('details'));
 print_header($title, $course_name, build_navigation($nav));
 
 $master_course_name = get_field('course', 'fullname', 'id', $push->src_course_id);
-$course_module_name = course_copy::get_cm_name($push->course_module_id);
+$course_module_name = course_copy::get_cached_cm_instance($push->course_module_id, 'name');
 $timeeffective = $push->timeeffective == 0 ? course_copy::str('immediately') : userdate($push->timeeffective);
 $timecreated = userdate($push->timecreated);
 
