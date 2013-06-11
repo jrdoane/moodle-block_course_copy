@@ -71,4 +71,5 @@ $string['attemptsmade'] = 'Attempts made';
 $string['lastattempt'] = 'Last attempt';
 $string['abandonthispush'] = 'Abandon this push';
 $string['locked'] = 'Locked';
+$string['isdone?'] = 'Is this push done?';
 

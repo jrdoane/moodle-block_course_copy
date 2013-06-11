@@ -14,6 +14,12 @@ class course_copy {
     private static $_cached_instance;
     private static $_cached_cm_instances;
 
+    const STATUS_UNTOUCHED = 'untouched';
+    const STATUS_LOCKED = 'locked';
+    const STATUS_COMPLETE = 'complete';
+    const STATUS_ABANDONED = 'abandoned';
+    const STATUS_ATTEMPTED = 'attempted';
+
     /**
      * Displays a link of a course if the current user has access to view the 
      * course. Otherwise a plain text varient of the course name will be 
@@ -315,7 +321,7 @@ class course_copy {
     }
 
     public function cron() {
-        $push_instances = get_records_sql(self::fetch_push_records_sql(false, false, false, true, true));
+        $push_instances = self::fetch_push_instances(false, true);
         $timeout = self::cron_timeout_fromnow();
         $rval = true;
 
@@ -597,7 +603,7 @@ class course_copy {
                 if(!empty($comparator)) {
                     $ou[] = self::sql_compare($key, $comparator, $value);
                 } else {
-                    $ou = $value; // Assume the string results in a SQL bool.
+                    $ou[] = $value; // Assume the string results in a SQL bool.
                 }
             }
         }
@@ -643,112 +649,21 @@ class course_copy {
             . self::sql_group_by(self::sql_select_as($td));
     }
 
-    /**
-     * This method is some crazyness that can get you just about any push or 
-     * push instance that you could ever want.
-     *
-     * @param int       $child_course_id Fetch data based off child course id.
-     * @param int       $master_course_id Fetch data based off master course id.
-     * @param int       $push_id Fetch data based on the push id.
-     * @param bool      $instances Returns push instances rather than pushes.
-     * @param bool      $pending Gets pending pushes if true. Otherwise fetches 
-     *                  all records based on denormalized course ids.
-     * @return string
-     */
-    public function fetch_push_records_sql($child_course_id=false, $master_course_id=false,
-        $push_id=false, $instances=false, $pending=true, $count=false)
-    {
-        $p = self::db_table_prefix();
-        $select = '';
-        $order_by = '';
-        $now = time();
-        $where = array();
-        $child_table_field = 'c.course_id';
-        $master_table_field = 'm.course_id';
+    public function sql_course_history($course_id, $count = false) {
+        $defs = self::sql_table_def();
 
-        /**
-         * Start of orphan control and handling for pending pushes.
-         * ---
-         * REMEMBER! If we don't have a master_id or child_id set 
-         * in push or push_inst, it should NEVER BE PENDING! In fact if it 
-         * hasn't been completed, in this state it is abandoned.
-         */
-
-        $sql_body = $this->sql_fetch_tables($pending);
-        $child_master_join = "
-            JOIN {$p}master AS m
-                ON m.id = p.master_id
-            JOIN {$p}child AS c
-                ON c.id = pi.child_id
-            ";
-
-        if($pending) {
-            $where[] = "p.timeeffective < $now";
-            $where[] = "pi.timecompleted = 0";
-        } else {
-            $child_table_field = 'p.src_course_id';
-            $master_table_field = 'pi.dest_course_id';
-            $child_master_join = '';
-        }
-        /**
-         * End of orphan control and handling for pending pushes.
-         */
-
-        if($push_id) {
-            $where[] = "p.id = {$push_id}";
-        }
+        $sql = self::sql_select(self::sql_select_as($defs['push']), $count)
+            . self::sql_from(false)
+            . self::sql_where(array(
+                self::sql_alias($defs['push'], 'src_course_id') => $course_id,
+                self::sql_alias($defs['push_inst'], 'dest_course_id') => $course_id
+            ), false, 'OR')
+            . self::sql_group_by(self::sql_select_as($defs['push']));
         
-        // Decoupled course OR WHERE from AND WHERE array.
-        $course_where = array();
-
-        /*
-         * If child_course_id and master_course_id are the same thing, we want 
-         * a full history of this one course as opposed to pushes that have 
-         * children of itself which should never happen.
-         */
-        if($child_course_id) {
-            $course_where[] = "{$child_table_field} = {$child_course_id} ";
+        if(!$count) {
+            $sql .= " ORDER BY " . self::sql_alias($defs['push'], 'timecreated') . ' DESC';
         }
-
-        if($master_course_id) {
-            $course_where[] = "{$master_table_field} = {$master_course_id} ";
-        }
-
-        // Get the course's history if child and master course ids are the same.
-        $sql_op = ' AND ';
-        if($master_course_id == $child_course_id) {
-            $sql_op = ' OR ';
-        }
-
-        if(!empty($course_where)) {
-            $where[] = implode($sql_op, $course_where);
-        }
-
-        $group_by = "GROUP BY $select";
-
-        if($count) {
-            $select = "COUNT({$select})";
-        }
-
-        $where = implode(' AND ', $where);
-
-        if(!empty($where)) {
-            $where = 'WHERE ' . $where;
-        }
-
-        $sql = "
-            SELECT {$select}
-            FROM {$p}push AS p
-            JOIN {$p}push_inst AS pi
-                ON pi.push_id = p.id AND
-                pi.child_id IS NOT NULL
-            {$child_master_join}
-            $where
-            $group_by
-            ";
-
         return $sql;
-
     }
 
     public function fetch_pending_pushes_by_child_course($course_id=null, $limit=0, $offset=0) {
@@ -761,32 +676,43 @@ class course_copy {
         return get_records_sql($sql, $offset, $limit);
     }
 
-    public function count_pending_pushes_by_child_course($course_id) {
-        $sql = $this->fetch_push_records_sql($course_id, null, false, false, true, true);
-        return count_records_sql($sql);
+    public function fetch_pending_push_instances_by_child_course($course_id) {
+        $pdef = self::sql_table_def('push');
+        $pidef = self::sql_table_def('push_inst');
+        $sql = self::sql_select(self::sql_select_as($pidef))
+            . self::sql_from(false)
+            . self::sql_where(array(
+                self::sql_where(array(
+                    self::sql_alias($pidef, 'dest_course_id') => $course_id,
+                    self::sql_alias($pidef, 'timecompleted') => 0
+                ), true),
+                self::sql_where(array(
+                    self::sql_alias($pidef, 'child_id') => 0,
+                    self::sql_alias($pdef, 'master_id') => 0
+                ), true, 'AND', '>')
+            ), false, 'AND', false)
+            . self::sql_group_by(self::sql_select_as($pidef));
+        return get_records_sql($sql);
     }
 
-    public function fetch_pending_pushes_by_master_course($course_id, $limit=0, $offset=0) {
-        $sql = $this->fetch_push_records_sql(null, $course_id, false, false, true);
-        return get_records_sql($sql, $offset, $limit);
-    }
-
-    public function count_pending_pushes_by_master_course($course_id) {
-        $sql = $this->fetch_push_records_sql(null, $course_id, false, false, true, true);
-        return count_records_sql($sql);
-    }
-
-    public function fetch_push_instances($push_id, $pending = false) {
+    public function fetch_push_instances($push_id = false, $pending = false) {
         $defs = self::sql_table_def();
         $sql = self::sql_select(self::sql_select_as($defs['push_inst']))
-            . self::sql_from($pending)
-            . self::sql_where(array(self::sql_alias($defs['push'], 'id') => $push_id));
+            . self::sql_from($pending);
+        if($push_id) {
+            $sql .= self::sql_where(array(self::sql_alias($defs['push'], 'id') => $push_id));
+        }
         return get_records_sql($sql);
     }
 
     public function course_has_history($course_id) {
         return record_exists('block_course_copy_push', 'src_course_id', $course_id) or
             record_exists('block_course_copy_push_inst', 'dest_course_id', $course_id);
+    }
+
+    public function count_course_push_history($course_id) {
+        $sql = $this->sql_course_history($course_id, true);
+        return count_records_sql($sql);
     }
 
     /**
@@ -796,17 +722,7 @@ class course_copy {
      * opposed to one or the other. This is also fairly easy to query.
      */
     public function fetch_course_push_history($course_id, $limit=0, $offset=0) {
-        $defs = self::sql_table_def();
-
-        $sql = self::sql_select(self::sql_select_as($defs['push']))
-            . self::sql_from(false)
-            . self::sql_where(array(
-                self::sql_alias($defs['push'], 'src_course_id') => $course_id,
-                self::sql_alias($defs['push_inst'], 'dest_course_id') => $course_id
-            ), false, 'OR')
-            . self::sql_group_by(self::sql_select_as($defs['push']));
-
-
+        $sql = $this->sql_course_history($course_id, false);
         $data = get_records_sql($sql, $offset, $limit);
         // Almost there, we want all the push_inst records to be included here 
         // as well.
@@ -818,11 +734,6 @@ class course_copy {
             }
         }
         return $data;
-    }
-
-    public function fetch_course_push_history_count($course_id) {
-        return count_records_sql($this->fetch_push_records_sql(
-            $course_id, $course_id, false, false, false, true));
     }
 
     public function get_possible_masters() {
@@ -846,11 +757,11 @@ class course_copy {
             SELECT
             FROM {$p}course AS c
             WHERE c.id NOT IN
-                SELECT bccm.course_id FROM {$p}block_course_copy_master AS bccm
-            ) OR  c.id NOT IN (
-                SELECT bccc.course_id FROM {$p}block_course_copy_child AS bccc
-            )
-            ";
+            SELECT bccm.course_id FROM {$p}block_course_copy_master AS bccm
+        ) OR  c.id NOT IN (
+            SELECT bccc.course_id FROM {$p}block_course_copy_child AS bccc
+        )
+        ";
         return get_records_sql($sql);
     }
 
@@ -865,9 +776,9 @@ class course_copy {
             SELECT c.*
             FROM {$bp}child AS ch
             JOIN {$CFG->prefix}course AS c
-                ON ch.course_id = c.id
+            ON ch.course_id = c.id
             WHERE ch.master_id = $master_id
-        ");
+            ");
     }
 
     public function get_children_courses_by_master_course_id($course_id) {
@@ -1068,6 +979,33 @@ class course_copy {
             'id' => $push_inst_id,
             'child_id' => 0
         ));
+    }
+
+    public static function push_instance_status($push, $push_inst) {
+        $status = course_copy::STATUS_UNTOUCHED;
+        if ($push_inst->isprocessing) {
+            $status = course_copy::STATUS_LOCKED;
+        } else if($push_inst->timecompleted > 0) {
+            $status = course_copy::STATUS_COMPLETE;
+        } else if(!$push->master_id or !$push_inst->child_id) {
+            $status = course_copy::STATUS_ABANDONED;
+        } else if ($push_inst->attempts > 0) {
+            $status = course_copy::STATUS_ATTEMPTED;
+        }
+        return $status;
+    }
+
+    public static function is_push_done($push, $insts) {
+        $complete = array(
+            self::STATUS_COMPLETE,
+            self::STATUS_ABANDONED
+        );
+        foreach($insts as $i) {
+            if(!in_array(self::push_instance_status($push, $i), $complete)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

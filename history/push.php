@@ -52,6 +52,7 @@ $master_course_name = get_field('course', 'fullname', 'id', $push->src_course_id
 $course_module_name = course_copy::get_cached_cm_instance($push->course_module_id, 'name');
 $timeeffective = $push->timeeffective == 0 ? course_copy::str('immediately') : userdate($push->timeeffective);
 $timecreated = userdate($push->timecreated);
+$is_done = get_string(course_copy::is_push_done($push, $push->instances) ? 'yes' : 'no');
 
 $push_table = new stdClass;
 $push_table->head = array(course_copy::str('pushdetails'), '');
@@ -61,7 +62,8 @@ $push_table->data = array(
     array(course_copy::str('coursemodulename'), $course_module_name),
     array(course_copy::str('issuedby'), course_copy::user_profile_link($push->user_id)),
     array(course_copy::str('timeeffective'), $timeeffective),
-    array(course_copy::str('timecreated'), $timecreated)
+    array(course_copy::str('timecreated'), $timecreated),
+    array(course_copy::str('isdone?'), $is_done)
 );
 
 $instance_table = new stdClass;

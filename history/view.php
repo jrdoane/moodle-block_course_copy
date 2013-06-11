@@ -9,6 +9,9 @@ $course         = get_record('course', 'id', $course_id);
 $title          = course_copy::str('blockname') . ": $course->fullname: " . course_copy::str('viewhistory');
 $course_page_url = new moodle_url("{$CFG->wwwroot}/course/view.php");
 $course_page_url->param('id', $course->id);
+$base_url = new moodle_url("{$CFG->wwwroot}/blocks/course_copy/history/view.php");
+$base_url->param('course_id', $course_id);
+$base_url->param('perpage', $perpage);
 
 $nav = array(
     array(
@@ -52,6 +55,7 @@ $table = (object)array(
     'data' => array(),
 );
 
+$total = $course_copy->count_course_push_history($course->id);
 $history = $course_copy->fetch_course_push_history($course->id, $perpage, $page);
 foreach($history as &$h) {
     usort($h->instances, function($a, $b) {
@@ -129,5 +133,7 @@ foreach($history as $push) {
 print_heading(course_copy::str('blockname'), 'center', 1);
 print_heading(course_copy::str('viewhistory') . ': ' . $course->fullname, 'center' , 2);
 print_table($table);
+print_paging_bar($total, $page, $perpage, $base_url);
+
 
 print_footer();
