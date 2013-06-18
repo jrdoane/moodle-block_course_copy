@@ -1,7 +1,6 @@
 <?php
 
 require_once(dirname(__FILE__) . '/init.php');
-$course_copy = course_copy::create();
 $master_course_id = required_param('master_course_id', PARAM_INT);
 $master_course = get_record('course', 'id', $master_course_id);
 $master_id = get_field('block_course_copy_master', 'id', 'course_id', $master_course_id);
@@ -12,6 +11,8 @@ $history_url = new moodle_url("{$CFG->wwwroot}/blocks/course_copy/history/view.p
 $history_url->param('course_id', $master_course_id);
 $course_url = new moodle_url("{$CFG->wwwroot}/course/view.php");
 $course_url->param('id', $master_course_id);
+
+course_copy::can_user_push($master_course_id, true);
 
 if($data = $form->get_data()) {
     if($data->pushnow) {

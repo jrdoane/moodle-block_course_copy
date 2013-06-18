@@ -15,7 +15,7 @@ array_reduce($push->instances, function(&$working, $item) {
     $working[] = $item->dest_course_id;
 }, $impacted_classrooms);
 
-if(!course_copy::can_view_history($impacted_classrooms)) {
+if(!course_copy::can_view_history($push->src_course_id)) {
     error("User does not have access to view push history for at least one course.");
 }
 

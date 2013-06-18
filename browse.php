@@ -1,8 +1,6 @@
 <?php
 
 require_once(dirname(__FILE__) . '/init.php');
-$course_copy = course_copy::create();
-
 $course_id = required_param('course_id', PARAM_INT);
 $course = get_record('course', 'id', $course_id);
 $course_url = "{$CFG->wwwroot}/course/view.php?id={$course_id}";
@@ -21,19 +19,19 @@ $nav = array(
     )
 );
 
-$is_master = $course_copy->is_master($course_id);
-$is_child = $course_copy->is_child($course_id);
+$is_master = course_copy::is_master($course_id);
+$is_child = course_copy::is_child($course_id);
 
 if($is_master and $is_child) {
     error("Course appears to be both a master and child. Impossible.");
 }
 
 if($is_master) {
-    $count = $course_copy->count_pending_pushes_by_master_course($course_id);
-    $pushes = $course_copy->fetch_pending_pushes_by_master_course($course_id);
+    $count = course_copy::count_pending_pushes_by_master_course($course_id);
+    $pushes = course_copy::fetch_pending_pushes_by_master_course($course_id);
 } else {
-    $count = $course_copy->count_pending_pushes_by_child_course($course_id);
-    $pushes = $course_copy->fetch_pending_pushes_by_child_course($course_id);
+    $count = course_copy::count_pending_pushes_by_child_course($course_id);
+    $pushes = course_copy::fetch_pending_pushes_by_child_course($course_id);
 }
 
 print_header($heading_str, $heading_str, build_navigation($nav));
@@ -52,7 +50,7 @@ foreach($pushes as $p) {
     $waiting_list = '<ul>';
     $course_list_str = '<ul>';
     $has_waiting = false;
-    $instances = $course_copy->fetch_pending_push_instances($p->id, $is_child ? $course_id : null);
+    $instances = course_copy::fetch_pending_push_instances($p->id, $is_child ? $course_id : null);
 
     foreach($instances as $i) {
         $course_name = get_field('course', 'fullname', 'id', $i->dest_course_id);

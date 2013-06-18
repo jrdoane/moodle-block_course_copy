@@ -29,7 +29,10 @@ $block_course_copy_capabilities = array(
         'captype' => 'write',
         'contextlevel' => CONTEXT_COURSE,
         'legacy' => array (
-            'admin' => CAP_ALLOW
+            'admin' => CAP_ALLOW,
+            'teacher' => CAP_PREVENT,
+            'editingteacher' => CAP_PREVENT,
+            'student' => CAP_PROHIBIT
         )
     ),
 
@@ -37,8 +40,10 @@ $block_course_copy_capabilities = array(
         'captype' => 'read',
         'contextlevel' => CONTEXT_COURSE,
         'legacy' => array (
+            'admin' => CAP_ALLOW,
             'teacher' => CAP_ALLOW,
-            'admin' => CAP_ALLOW
+            'editingteacher' => CAP_ALLOW,
+            'student' => CAP_PROHIBIT
         )
     )
 );

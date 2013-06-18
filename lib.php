@@ -6,7 +6,7 @@ require_once("{$CFG->dirroot}/backup/restorelib.php");
 require_once("{$CFG->dirroot}/lib/xmlize.php");
 
 /**
- * CourseCopy represents the basic ability of this block. Plugins will exist to 
+ * course_copy represents the basic ability of this block. Plugins will exist to 
  * alter how CourseCopy works and these plugins will simply extend this class.
  */
 class course_copy {
@@ -63,54 +63,65 @@ class course_copy {
         $url->param('id', $user_id);
         return self::make_link(fullname(get_record('user', 'id', $user_id)), $url->out());
     }
-
-    /**
-     * This is basically a: if null, get current user_id, otherwise user 
-     * user_id. This is wrapped to protect the scope of $USER.
-     *
-     * @param mixed     $user_id will be returned unless it's null.
-     * @return int
-     */
-    private static function simple_user_id($user_id) {
-        if(!$user_id) {
-            global $USER;
-            return $USER->id;
-        }
-        return $user_id;
-    }
-
+    
      /**
       * Checks history capability against any one or many course id(s).
       *
       * @param mixed     $course_ids is a single id or array of course ids.
       * @return bool
       */
-    public static function can_view_history($course_ids, $user_id=null) {
-        return self::has_courses_capability('block/course_copy:history', $course_ids, $user_id);
+    public static function can_view_history($course_id, $require=false) {
+        return self::has_course_capability('block/course_copy:history', $course_id, false, $require);
     }
 
     /**
-     * The capability to push must be present on all courses that are being 
-     * touched in any given push.
+     * Based on a master course, we find out if a user can push to all courses. 
+     * If a person can't push to everything, then they can't push at all.
      *
      * @param mixed     $course_ids is a single id or array of course ids.
      * @return bool
      */
-    public static function can_user_push($course_ids, $user_id=null) {
-        return self::has_courses_capability('block/course_copy:push', $course_ids, $user_id);
+    public static function can_user_push($course_id, $require=false) {
+        if(course_copy::is_master($course_id)) {
+            $children = self::get_children_courses_by_master_course_id($course_id);
+            if($children) {
+                $course_ids = array_reduce($children, function(&$working, $i) {
+                    $working[] = $i->id;
+                    return $working;
+                }, array());
+            } else {
+                $course_ids = array();
+            }
+        }
+        $course_ids[] = $course_id;
+        return self::has_courses_capability('block/course_copy:push', $course_ids, false, $require);
     }
 
-    public static function has_courses_capability($cap, $courses, $only_one=false, $user_id=null) {
-        $user_id = self::simple_user_id($user_id);
-        if(is_numeric($courses)) {
-            $courses = array($courses);
-        }
-        $rval = $only_one;
+    public static function has_one_courses_capability($cap, $course_ids, $require=false) {
+        return self::has_courses_capability($cap, $course_ids, true, $require);
+    }
+
+    public static function has_course_capability($cap, $course, $require=false) {
+        return self::has_courses_capability($cap, array($course), false, $require);
+    }
+
+    public static function has_courses_capability($cap, $courses, $only_one=false, $require=false) {
+        $rval = true;
         foreach($courses as $id) {
             $context = get_context_instance(CONTEXT_COURSE, $id);
-            $cap_result = has_capability($cap, $context, $user_id);
+            if($require) {
+                require_capability($cap, $context);
+                continue;
+            }
+            $cap_result = has_capability($cap, $context);
+            if($cap_result and $only_one) {
+                return true;
+            }
+            // WARNING: For some weird reason, if you use "and" instead of "&&", 
+            // this will always return true. -jdoane 20130618
+            $rval = $rval && $cap_result;
         }
-        return true;
+        return $rval;
     }
 
     public static function course_module_grade_item($cm) {
@@ -131,7 +142,7 @@ class course_copy {
         $gg = new grade_grade();
         return $gg->fetch_all(array('itemid' => $gi->id));
     }
-    
+
     /**
      * This inserts/moves the contents of $after directly after $before in the 
      * $csv. A concequence of this method is that if $before doesn't exist in 
@@ -361,7 +372,7 @@ class course_copy {
         $master = get_record('block_course_copy_master', 'course_id', $course_id);
         if(!$master) { return; }
         if(!record_exists('course', 'id', $course_id)) {
-            $this->remove_master_by_course($course_id);
+            self::remove_master_by_course($course_id);
         }
     }
 
@@ -369,7 +380,7 @@ class course_copy {
         $child = get_record('block_course_copy_child', 'course_id', $course_id);
         if(!$child) { return; }
         if(!record_exists('course', 'id', $course_id)) {
-            $this->remove_child_by_course($course_id);
+            self::remove_child_by_course($course_id);
         }
     }
 
@@ -462,7 +473,7 @@ class course_copy {
         return true;
     }
 
-    public function get_push_source_cmid($push_inst_id) {
+    public static function get_push_source_cmid($push_inst_id) {
         $p = self::db_table_prefix();
         return get_field_sql("SELECT p.course_module_id
             FROM {$p}push AS p
@@ -634,14 +645,14 @@ class course_copy {
     /**
      * 
      */
-    public function sql_group_by($fields) {
+    public static function sql_group_by($fields) {
         if(empty($fields)) {
             return '';
         }
         return "GROUP BY " . implode(', ', $fields);
     }
 
-    public function sql_fetch_push($push_id, $instances=false) {
+    public static function sql_fetch_push($push_id, $instances=false) {
         $td = self::sql_table_def($instances ? 'push_inst' : 'push');
         return self::sql_select(self::sql_select_as($td))
             . self::sql_from(false)
@@ -649,7 +660,7 @@ class course_copy {
             . self::sql_group_by(self::sql_select_as($td));
     }
 
-    public function sql_course_history($course_id, $count = false) {
+    public static function sql_course_history($course_id, $count = false) {
         $defs = self::sql_table_def();
 
         $sql = self::sql_select(self::sql_select_as($defs['push']), $count)
@@ -666,7 +677,7 @@ class course_copy {
         return $sql;
     }
 
-    public function fetch_pending_pushes_by_child_course($course_id=null, $limit=0, $offset=0) {
+    public static function fetch_pending_pushes_by_child_course($course_id=null, $limit=0, $offset=0) {
         $pdef = self::sql_table_def('push');
         $pidef = self::sql_table_def('push_inst');
         $sql = self::sql_select(self::sql_select_as($pdef))
@@ -676,7 +687,7 @@ class course_copy {
         return get_records_sql($sql, $offset, $limit);
     }
 
-    public function fetch_pending_push_instances_by_child_course($course_id) {
+    public static function fetch_pending_push_instances_by_child_course($course_id) {
         $pdef = self::sql_table_def('push');
         $pidef = self::sql_table_def('push_inst');
         $sql = self::sql_select(self::sql_select_as($pidef))
@@ -695,7 +706,7 @@ class course_copy {
         return get_records_sql($sql);
     }
 
-    public function fetch_push_instances($push_id = false, $pending = false) {
+    public static function fetch_push_instances($push_id = false, $pending = false) {
         $defs = self::sql_table_def();
         $sql = self::sql_select(self::sql_select_as($defs['push_inst']))
             . self::sql_from($pending);
@@ -705,13 +716,13 @@ class course_copy {
         return get_records_sql($sql);
     }
 
-    public function course_has_history($course_id) {
+    public static function course_has_history($course_id) {
         return record_exists('block_course_copy_push', 'src_course_id', $course_id) or
             record_exists('block_course_copy_push_inst', 'dest_course_id', $course_id);
     }
 
-    public function count_course_push_history($course_id) {
-        $sql = $this->sql_course_history($course_id, true);
+    public static function count_course_push_history($course_id) {
+        $sql = self::sql_course_history($course_id, true);
         return count_records_sql($sql);
     }
 
@@ -721,8 +732,8 @@ class course_copy {
      * the fetch_pending_pushes_... methods which target one and the other as 
      * opposed to one or the other. This is also fairly easy to query.
      */
-    public function fetch_course_push_history($course_id, $limit=0, $offset=0) {
-        $sql = $this->sql_course_history($course_id, false);
+    public static function fetch_course_push_history($course_id, $limit=0, $offset=0) {
+        $sql = self::sql_course_history($course_id, false);
         $data = get_records_sql($sql, $offset, $limit);
         // Almost there, we want all the push_inst records to be included here 
         // as well.
@@ -736,7 +747,7 @@ class course_copy {
         return $data;
     }
 
-    public function get_possible_masters() {
+    public static function get_possible_masters() {
         global $CFG;
         $p = $CFG->prefix;
         $sql = "
@@ -752,7 +763,7 @@ class course_copy {
         return get_records_sql($sql);
     }
 
-    public function get_possible_children($master_id) {
+    public static function get_possible_children($master_id) {
         $sql = "
             SELECT
             FROM {$p}course AS c
@@ -765,11 +776,11 @@ class course_copy {
         return get_records_sql($sql);
     }
 
-    public function get_children($master_id) {
+    public static function get_children($master_id) {
         return get_records('block_course_copy_child', 'master_id', $master_id);
     }
 
-    public function get_children_courses($master_id) {
+    public static function get_children_courses($master_id) {
         global $CFG;
         $bp = self::db_table_prefix();
         return get_records_sql("
@@ -781,17 +792,17 @@ class course_copy {
             ");
     }
 
-    public function get_children_courses_by_master_course_id($course_id) {
+    public static function get_children_courses_by_master_course_id($course_id) {
         $master_id = get_field('block_course_copy_master', 'id', 'course_id', $course_id);
-        return $this->get_children_courses($master_id);
+        return self::get_children_courses($master_id);
     }
 
-    public function get_children_by_master_course_id($course_id) {
+    public static function get_children_by_master_course_id($course_id) {
         $master_id = get_field('block_course_copy_master', 'id', 'course_id', $course_id);
-        return $this->get_children($master_id);
+        return self::get_children($master_id);
     }
 
-    public function get_masters($page=0, $per_page=10) {
+    public static function get_masters($page=0, $per_page=10) {
         global $CFG;
         $limit = $per_page;
         $offset = $page * $limit;
@@ -807,7 +818,7 @@ class course_copy {
         );
     }
 
-    public function get_master_course_by_child_course_id($course_id) {
+    public static function get_master_course_by_child_course_id($course_id) {
         $master_id = get_field('block_course_copy_child', 'master_id', 'course_id', $course_id);
         if(!$master_id) {
             error("This course does not have a master ({$course_id}).");
@@ -819,41 +830,41 @@ class course_copy {
         return get_record('course', 'id', $master_course_id);
     }
 
-    public function can_be_assigned($course_id) {
-        if($this->is_master_or_child($course_id)) {
+    public static function can_be_assigned($course_id) {
+        if(self::is_master_or_child($course_id)) {
             return false;
         }
         return true;
     }
 
-    public function can_be_master($course_id) {
-        return $this->can_be_assigned($course_id);
+    public static function can_be_master($course_id) {
+        return self::can_be_assigned($course_id);
     }
 
-    public function can_be_child($course_id) {
-        return $this->can_be_assigned($course_id);
+    public static function can_be_child($course_id) {
+        return self::can_be_assigned($course_id);
     }
 
-    public function is_master_or_child($course_id) {
-        if($this->is_child($course_id)) {
+    public static function is_master_or_child($course_id) {
+        if(self::is_child($course_id)) {
             return true;
         }
-        if($this->is_master($course_id)) {
+        if(self::is_master($course_id)) {
             return true;
         }
         return false;
     }
 
-    public function is_master($course_id) {
+    public static function is_master($course_id) {
         return record_exists('block_course_copy_master', 'course_id', $course_id);
     }
 
-    public function is_child($course_id, $master_id=false) {
+    public static function is_child($course_id) {
         return record_exists('block_course_copy_child', 'course_id', $course_id);
     }
 
-    public function add_master($course_id) {
-        if(!$this->can_be_master($course_id)) {
+    public static function add_master($course_id) {
+        if(!self::can_be_master($course_id)) {
             error("This course can not be a master.");
         }
         $master = (object)array(
@@ -866,8 +877,8 @@ class course_copy {
         }
     }
 
-    public function add_child($course_id, $master_id) {
-        if(!$this->can_be_child($course_id)) {
+    public static function add_child($course_id, $master_id) {
+        if(!self::can_be_child($course_id)) {
             error("This course can not be a child.");
         }
 
@@ -886,23 +897,23 @@ class course_copy {
         }
     }
 
-    public function remove_child_by_course($course_id) {
+    public static function remove_child_by_course($course_id) {
         $child_id = get_field('block_course_copy_child', 'id', 'course_id', $course_id);
         if(!$child_id) {
             error('attempted to remove a child by a course that is not a child.');
         }
-        $this->remove_child($child_id);
+        self::remove_child($child_id);
     }
 
-    public function remove_master_by_course($course_id) {
+    public static function remove_master_by_course($course_id) {
         $master_id = get_field('block_course_copy_master', 'id', 'course_id', $course_id);
         if(!$master_id) {
             error('attempted to remove a master by a course that is not a master.');
         }
-        $this->remove_master($master_id);
+        self::remove_master($master_id);
     }
 
-    public function remove_child($child_id) {
+    public static function remove_child($child_id) {
         global $CFG;
         delete_records('block_course_copy_child', 'id', $child_id);
         execute_sql("
@@ -912,7 +923,7 @@ class course_copy {
             ");
     }
 
-    public function remove_master($master_id) {
+    public static function remove_master($master_id) {
         delete_records('block_course_copy_child', 'master_id', $master_id);
         delete_records('block_course_copy_master', 'id', $master_id);
         $pushes = get_records('block_course_copy_push', 'master_id', $master_id);
@@ -936,7 +947,7 @@ class course_copy {
     public function master_has_outstanding_push($master_id) {
     }
 
-    public function child_has_outstanding_push($child_id) {
+    public static function child_has_outstanding_push($child_id) {
         $p = self::db_table_prefix();
         return record_exists_sql("
             SELECT pi.*
@@ -948,7 +959,7 @@ class course_copy {
             ");
     }
 
-    public function course_has_outstanding_push($course_id) {
+    public static function course_has_outstanding_push($course_id) {
         $bp = self::db_table_prefix();
         return record_exists_sql("
             SELECT *
@@ -959,12 +970,12 @@ class course_copy {
             ");
     }
 
-    public function master_has_children($master_id) {
+    public static function master_has_children($master_id) {
         return record_exists('block_course_copy_child', 'master_id', $master_id);
     }
 
-    public function master_has_children_by_course($course_id) {
-        return $this->master_has_children(get_field('block_course_copy_master', 'id', 'course_id', $course_id));
+    public static function master_has_children_by_course($course_id) {
+        return self::master_has_children(get_field('block_course_copy_master', 'id', 'course_id', $course_id));
     }
 
     public static function abandon_push($push_id) {
@@ -1527,9 +1538,8 @@ class block_course_copy_create_push extends moodleform {
     protected $course_modules;
 
     function __construct($url, $course_id) {
-        $course_copy = course_copy::create();
         $this->master_course = get_record('course', 'id', $course_id);
-        $this->child_courses = $course_copy->get_children_courses_by_master_course_id($this->master_course->id);
+        $this->child_courses = course_copy::get_children_courses_by_master_course_id($this->master_course->id);
         $this->course_modules = course_copy::get_course_modules($course_id, true);
         parent::__construct($url, null, 'POST');
     }

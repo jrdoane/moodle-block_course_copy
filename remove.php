@@ -5,7 +5,6 @@
  */
 require_once(dirname(__FILE__) . '/init.php');
 
-$course_copy = course_copy::create();
 $course_id = required_param('course_id', PARAM_INT);
 $course = get_record('course', 'id', $course_id);
 $course_url = "{$CFG->wwwroot}/course/view.php?id={$course_id}";
@@ -31,10 +30,10 @@ $accepted = $confirmation_form->user_accepted();
 
 if($accepted) {
     if($master) {
-        $course_copy->remove_master_by_course($course_id); 
+        course_copy::remove_master_by_course($course_id); 
     }
     if($child) {
-        $course_copy->remove_child_by_course($course_id);
+        course_copy::remove_child_by_course($course_id);
     }
 }
 

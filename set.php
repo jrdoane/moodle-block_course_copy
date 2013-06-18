@@ -29,7 +29,7 @@ if (!$create_child) {
     if ($course_copy->plugin_manages_masters()) {
         error('Plugin manages masters automatically. Adding masters is disabled.');
     }
-    $course_copy->add_master($course_id);
+    course_copy::add_master($course_id);
     redirect($course_url);
 }
 
@@ -38,7 +38,7 @@ if ($course_copy->plugin_manages_children()) {
 }
 
 if($master_id) {
-    $course_copy->add_child($course_id, $master_id);
+    course_copy::add_child($course_id, $master_id);
     redirect($course_url);
 }
 
@@ -62,11 +62,11 @@ print_header($heading, $heading, build_navigation($nav));
 // a course a child. Setting a master will have been redirected by now.
 
 
-if (!$course_copy->can_be_child($course_id)) {
+if (!course_copy::can_be_child($course_id)) {
     error('This course can not be a child.');
 }
 
-$possible_courses = $course_copy->get_masters($page, $perpage);
+$possible_courses = course_copy::get_masters($page, $perpage);
 
 if (empty($possible_courses)) {
     error('Cannot list master courses since none exist.');

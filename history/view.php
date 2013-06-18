@@ -1,7 +1,6 @@
 <?php
 require_once(dirname(dirname(__FILE__)) . '/lib.php');
 global $CFG;
-$course_copy    = course_copy::create();
 $course_id      = required_param('course_id', PARAM_INT);
 $page           = optional_param('page', 0, PARAM_INT);
 $perpage        = optional_param('perpage', 10, PARAM_INT);
@@ -34,7 +33,7 @@ if(!course_copy::can_view_history($course_id)) {
 
 // We're only supposed to get to this page if we have a history but we need to 
 // double check anyways instead of carping without end.
-if(!$course_copy->course_has_history($course->id)) {
+if(!course_copy::course_has_history($course->id)) {
     notify(course_copy::str('thiscoursehasnohistory'));
     print_footer();
     exit();
@@ -55,8 +54,8 @@ $table = (object)array(
     'data' => array(),
 );
 
-$total = $course_copy->count_course_push_history($course->id);
-$history = $course_copy->fetch_course_push_history($course->id, $perpage, $page);
+$total = course_copy::count_course_push_history($course->id);
+$history = course_copy::fetch_course_push_history($course->id, $perpage, $page);
 foreach($history as &$h) {
     usort($h->instances, function($a, $b) {
         if($a->dest_course_id == $b->dest_course_id) {
