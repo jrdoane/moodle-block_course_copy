@@ -1152,6 +1152,8 @@ class course_copy {
         // This runs the restore.
         $src_course_id = get_field('course_modules', 'course', 'id', $src_course_module_id);
         $prefs = self::generate_restore_prefs($src_course_module_id, $dest_course_id);
+        global $preferences;
+        $preferences = $prefs;
         $file_path = "{$CFG->dataroot}/{$src_course_id}/backupdata/{$backup_code}.zip";
         $rval = import_backup_file_silently($file_path, $dest_course_id, false, false, $prefs);
         return $rval;
@@ -1169,12 +1171,6 @@ class course_copy {
 
         // Fake some backup data so we can generate some preferences.
         $prefs = self::generate_backup_prefs($cmid);
-        $count = 0;
-
-        // Moodle has some insanity where it stores some data that it needs 
-        // later in the initial backup checks that we bypassed. I don't 
-        // recommend getting rid of these. --jdoane 20130729
-        self::moodle_backup_checks($cm->course, $prefs);
 
         ### These next 3 lines are madness! (Blame Moodle 1.9) ###
         ### -jdoane (20130805)                                 ###
@@ -1183,6 +1179,11 @@ class course_copy {
         $preferences =& $prefs;
         $CFG->backup_preferences =& $prefs;
         ### </madness> ###
+
+        // Moodle has some insanity where it stores some data that it needs 
+        // later in the initial backup checks that we bypassed. I don't 
+        // recommend getting rid of these. --jdoane 20130729
+        self::moodle_backup_checks($cm->course, $prefs);
 
         $rval = backup_execute($prefs, $err);
         if($rval) {
