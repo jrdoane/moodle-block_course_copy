@@ -667,14 +667,14 @@ class course_copy {
     public static function sql_course_history($course_id, $count = false) {
         $defs = self::sql_table_def();
 
-        $sql = self::sql_select(self::sql_select_as($defs['push']), $count)
+        $sql = self::sql_select(self::sql_select_as($defs['push']))
             . self::sql_from(false)
             . self::sql_where(array(
                 self::sql_alias($defs['push'], 'src_course_id') => $course_id,
                 self::sql_alias($defs['push_inst'], 'dest_course_id') => $course_id
             ), false, 'OR')
             . self::sql_group_by(self::sql_select_as($defs['push']));
-        
+
         if(!$count) {
             $sql .= " ORDER BY " . self::sql_alias($defs['push'], 'timecreated') . ' DESC';
         }
@@ -726,7 +726,7 @@ class course_copy {
     }
 
     public static function count_course_push_history($course_id) {
-        $sql = self::sql_course_history($course_id, true);
+        $sql = "SELECT COUNT(total.*) FROM (" . self::sql_course_history($course_id, true) . ") AS total";
         return count_records_sql($sql);
     }
 
