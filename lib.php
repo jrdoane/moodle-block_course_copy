@@ -3,7 +3,12 @@ require_once(dirname(dirname(dirname(__FILE__))) . '/config.php');
 require_once("{$CFG->dirroot}/backup/lib.php");
 require_once("{$CFG->dirroot}/backup/backuplib.php");
 require_once("{$CFG->dirroot}/backup/restorelib.php");
+require_once("{$CFG->dirroot}/mod/quiz/backuplib.php");
 require_once("{$CFG->dirroot}/lib/xmlize.php");
+
+class CourseCopyException extends Exception {}
+class CourseModuleBackupFailedException extends CourseCopyException {}
+class CourseModuleRestoreFailedException extends CourseCopyException {}
 
 /**
  * course_copy represents the basic ability of this block. Plugins will exist to 
@@ -441,7 +446,6 @@ class course_copy {
 
         $rval = course_copy::copy_course_module($source_cm_id, $dest_course);
         if(!$rval) {
-            return false;
         }
 
         $push_inst->timecompleted = time();
@@ -944,9 +948,6 @@ class course_copy {
         }
     }
 
-    public function master_has_outstanding_push($master_id) {
-    }
-
     public static function child_has_outstanding_push($child_id) {
         $p = self::db_table_prefix();
         return record_exists_sql("
@@ -1054,13 +1055,10 @@ class course_copy {
         $err = '';
         $backup_code = self::backup_course_module($cmid, $err);
         if(!$backup_code) {
-            // Backup failed.
-            # error("Backup error: " . $err);
-            return false;
+            throw new CourseModuleBackupFailedException($err);
         }
         if(!self::restore_course_module($cmid, $dest_course_id, $backup_code)) {
-            #error('Failed to restore course module.');
-            return false;
+            throw new CourseModuleRestoreFailedException();
         }
         return true;
     }
@@ -1073,21 +1071,48 @@ class course_copy {
         return $restore_prefs;
     }
 
+    /**
+     * Gets everything need that the backup script requires for a particular 
+     * course module instance.
+     */
+    public static function get_glorified_cm_instance($modulename, $cm) {
+        global $CFG;
+        // This SQL query almost came from from Moodle 1.9. Backup appears to 
+        // like this kind of information for backing up courses prior to 1.9.16.
+        $sql = "SELECT cm.id AS coursemodule, m.*, cw.section, cm.visible AS visible,
+                    cm.groupmode, cm.groupingid, cm.groupmembersonly
+                FROM {$CFG->prefix}course_modules cm
+                JOIN {$CFG->prefix}course_sections cw
+                    ON cm.section = cw.id
+                JOIN {$CFG->prefix}modules md
+                    ON cm.module = md.id
+                JOIN {$CFG->prefix}$modulename m
+                    ON cm.instance = m.id
+                WHERE cm.id = {$cm->id}
+                    ";
+        return get_record_sql($sql);
+    }
+
     public static function generate_backup_prefs($course_module_id) {
         $cm = get_record('course_modules', 'id', $course_module_id);
         $module_name = get_field('modules', 'name', 'id', $cm->module);
+        $glorified_instance = self::get_glorified_cm_instance($module_name, $cm);
         $course = get_record('course', 'id', $cm->course);
-        $instance_name = get_field($module_name, 'name', 'id', $cm->instance);
         $backup_prefs = self::generate_prefs('backup', $course->id);
         $backup_prefs["backup_unique_code"] = time();
         $backup_prefs["backup_name"] = $backup_prefs["backup_unique_code"] . ".zip";
+        $backup_prefs["exists_{$module_name}"] = true;
         $backup_prefs["exists_one_{$module_name}"] = true;
+        $backup_prefs["backup_{$module_name}_instances"] = true;
+        $backup_prefs["backup_{$module_name}"] = true;
+        $backup_prefs["backup_{$module_name}_instance_{$cm->instance}"] = 1;
+        $backup_prefs["backup_user_info_{$module_name}_instance_{$cm->instance}"] = 0;
         $backup_prefs["mods"] = array(
             $module_name => (object)array(
                 'name' => $module_name,
                 'instances' => array(
                     $cm->instance => (object)array(
-                        'name' => $instance_name,
+                        'name' => $glorified_instance->name,
                         'backup' => 1,
                         'userinfo' => 0
                     )
@@ -1096,11 +1121,16 @@ class course_copy {
                 'userinfo' => 0
             )
         );
+        $backup_prefs["{$module_name}_instances"] = array($glorified_instance);
         $backup_prefs = (object)$backup_prefs;
         backup_add_static_preferences($backup_prefs);
+        file_put_contents('/tmp/jdoane', var_export($backup_prefs, true));
         return $backup_prefs;
     }
 
+    /**
+     * These are shared preferences between backup and restore.
+     */
     public static function generate_prefs($prefix, $course_id=null) {
         $prefs = array();
         $prefs["{$prefix}_users"] = 0;
@@ -1140,11 +1170,43 @@ class course_copy {
         // Fake some backup data so we can generate some preferences.
         $prefs = self::generate_backup_prefs($cmid);
         $count = 0;
+
+        // Moodle has some insanity where it stores some data that it needs 
+        // later in the initial backup checks that we bypassed. I don't 
+        // recommend getting rid of these. --jdoane 20130729
+        self::moodle_backup_checks($cm->course, $prefs);
+
+        ### These next 3 lines are madness! (Blame Moodle 1.9) ###
+        ### -jdoane (20130805)                                 ###
+        ### <madness> ###
+        global $preferences;
+        $preferences =& $prefs;
+        $CFG->backup_preferences =& $prefs;
+        ### </madness> ###
+
         $rval = backup_execute($prefs, $err);
         if($rval) {
             return $prefs->backup_unique_code;
         }
         return false;
+    }
+
+    /**
+     * This does all of Moodle's little checks that enables us to actually 
+     * backup anything.
+     * @param int       $course_id is exactly what it sounds like.
+     * @param object    $prefs is a backup preferences object.
+     * @return null
+     */
+    public static function moodle_backup_checks($course_id, &$prefs) {
+        #user_check_backup($course_id, $prefs->backup_unique_code, $prefs->backup_users, $prefs->backup_messages, $prefs->backup_blogs);
+        log_check_backup($course_id);
+        user_files_check_backup($course_id, $prefs->backup_unique_code);
+        course_files_check_backup($course_id, $prefs->backup_unique_code);
+        site_files_check_backup($course_id, $prefs->backup_unique_code);
+        if(!empty($prefs->quiz_instances)) {
+            quiz_check_backup_mods($course_id, $prefs->quiz_instances, $prefs->backup_unique_code);
+        }
     }
 
     public static function db_table_prefix() {
