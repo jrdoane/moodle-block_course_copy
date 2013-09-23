@@ -61,6 +61,7 @@ $push_table->data = array(
     array(course_copy::str('mastercourse'), course_copy::user_course_link($push->src_course_id)),
     array(course_copy::str('coursemodulename'), $course_module_name),
     array(course_copy::str('issuedby'), course_copy::user_profile_link($push->user_id)),
+    array(course_copy::str('descriptionforpush'), $push->description),
     array(course_copy::str('timeeffective'), $timeeffective),
     array(course_copy::str('timecreated'), $timecreated),
     array(course_copy::str('isdone?'), $is_done)
