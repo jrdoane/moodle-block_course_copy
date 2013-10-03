@@ -81,7 +81,19 @@ function course_copy_schedule_backup_next_execution ($backup_course,$backup_conf
     return $result;
 }
 
+function course_copy_backup_name($courseid, $backup_unique_code) {
+    return clean_filename("$backup_unique_code-$courseid.zip");
+}
 
+function course_copy_backup_dir() {
+    global $CFG;
+    return "$CFG->dataroot/course_copy_tmp/";
+}
+
+function course_copy_backup_path($courseid, $backup_unique_code) {
+    global $CFG;
+    return course_copy_backup_dir() . course_copy_backup_name($courseid, $backup_unique_code);
+}
 
 //This function implements all the needed code to prepare a course
 //to be in backup (insert temp info into backup temp tables).
