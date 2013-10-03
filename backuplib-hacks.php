@@ -36,7 +36,7 @@ function course_copy_schedule_backup_launch_backup($course, $cmid, $starttime = 
         course_copy_schedule_backup_log($starttime,$course->id,"End backup course $course->fullname - ERROR!!");
     }
 
-    return $status;
+    return $preferences->backup_unique_code;
 }
 
 //This function saves to backup_log all the needed process info
