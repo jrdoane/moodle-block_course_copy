@@ -78,7 +78,7 @@ class block_course_copy extends block_base {
                     if(!$course_copy->plugin_manages_children()) {
                         $remove_url->param('child', 1);
                         $remove_url->param('course_id', $COURSE->id);
-                        $option_list[] = course_copy::make_link(course_copy::str('relinquishchildstatus'), $url->out());
+                        $option_list[] = course_copy::make_link(course_copy::str('relinquishchildstatus'), $remove_url->out());
                         $remove_url->remove_params();
                     }
                 }
