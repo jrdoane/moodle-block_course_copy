@@ -103,80 +103,42 @@ function course_copy_schedule_backup_course_configure($course, $cmid, $starttime
     course_copy_schedule_backup_log($starttime,$course->id,"    checking parameters");
 
     $backup_config->backup_sche_modules = 1;
-    $backup_config->backup_sche_withuserdata = 1;
-    $backup_config->backup_sche_metacourse = 1;
-    $backup_config->backup_sche_users = 1;
-    $backup_config->backup_sche_logs = 1;
-    $backup_config->backup_sche_userfiles = 1;
-    $backup_config->backup_sche_coursefiles = 1;
-    $backup_config->backup_sche_sitefiles = 1;
+    $backup_config->backup_sche_withuserdata = 0;
+    $backup_config->backup_sche_metacourse = 0;
+    $backup_config->backup_sche_users = 0;
+    $backup_config->backup_sche_logs = 0;
+    $backup_config->backup_sche_userfiles = 0;
+    $backup_config->backup_sche_coursefiles = 0;
+    $backup_config->backup_sche_sitefiles = 0;
     $backup_config->backup_sche_gradebook_history = 0;
-    $backup_config->backup_sche_messages = 1;
-    $backup_config->backup_sche_blogs = 1;
+    $backup_config->backup_sche_messages = 0;
+    $backup_config->backup_sche_blogs = 0;
     $backup_config->backup_sche_active = 0;
     $backup_config->backup_sche_weekdays = "0000000";
     $backup_config->backup_sche_hour = 00;
     $backup_config->backup_sche_minute = 00;
-    $backup_config->backup_sche_keep = 1;
 
-    //Checks for the required files/functions to backup every mod
-    //And check if there is data about it
-    $count = 0;
-    if ($allmods = get_records("modules") ) {
-        foreach ($allmods as $mod) {
-            $modname = $mod->name;
-            $modfile = "$CFG->dirroot/mod/$modname/backuplib.php";
-            $modbackup = $modname."_backup_mods";
-            $modcheckbackup = $modname."_check_backup_mods";
-            if (file_exists($modfile)) {
-               include_once($modfile);
-               if (function_exists($modbackup) and function_exists($modcheckbackup)) {
-                   $var = "exists_".$modname;
-                   $$var = true;
-                   $count++;
+    #if ($allmods = get_records("modules") ) {
+    #    foreach ($allmods as $mod) {
+    #        $preferences->mods[$mod->name]->backup = false;
+    #    }
+    #}
 
-                   // PENNY NOTES: I have moved from here to the closing brace inside
-                   // by two sets of ifs()
-                   // to avoid the backup failing on a non existant backup.
-                   // If the file/function/whatever doesn't exist, we don't want to set this
-                   // this module in backup preferences at all.
-                   //Check data
-                   //Check module info
-                   $var = "backup_".$modname;
-                   if (!isset($$var)) {
-                       $$var = $backup_config->backup_sche_modules;
-                   }
-                   //Now stores all the mods preferences into an array into preferences
-                   $preferences->mods[$modname]->backup = $$var;
+    $cm = get_record('course_modules', 'id', $cmid);
+    $mod = get_record('modules', 'id', $cm->module);
 
-                   //Check include user info
-                   $var = "backup_user_info_".$modname;
-                   if (!isset($$var)) {
-                       $$var = $backup_config->backup_sche_withuserdata;
-                   }
-                   //Now stores all the mods preferences into an array into preferences
-                   $preferences->mods[$modname]->userinfo = $$var;
-                   //And the name of the mod
-                   $preferences->mods[$modname]->name = $modname;
-               }
-            }
-        }
+    $modname = $mod->name;
+    $preferences->mods[$mod->name]->backup = true;
+    $preferences->mods[$mod->name]->userinfo = false;
+    $preferences->mods[$mod->name]->name = $mod->name; /* sigh */
+    // now set the instance
+    if (empty($preferences->mods[$modname]->instances)) {
+        $preferences->mods[$modname]->instances = array(); // avoid warnings
     }
-
-    // now set instances
-    if ($coursemods = get_course_mods($course->id)) {
-        foreach ($coursemods as $mod) {
-            if (array_key_exists($mod->modname,$preferences->mods)) { // we are to backup this module
-                if (empty($preferences->mods[$mod->modname]->instances)) {
-                    $preferences->mods[$mod->modname]->instances = array(); // avoid warnings
-                }
-                $preferences->mods[$mod->modname]->instances[$mod->instance]->backup = $preferences->mods[$mod->modname]->backup;
-                $preferences->mods[$mod->modname]->instances[$mod->instance]->userinfo = $preferences->mods[$mod->modname]->userinfo;
-                // there isn't really a nice way to do this...
-                $preferences->mods[$mod->modname]->instances[$mod->instance]->name = get_field($mod->modname,'name','id',$mod->instance);
-            }
-        }
-    }
+    $preferences->mods[$modname]->instances[$cm->instance]->backup = $preferences->mods[$modname]->backup; /* sigh */
+    $preferences->mods[$modname]->instances[$cm->instance]->userinfo = $preferences->mods[$modname]->userinfo; /* sigh */
+    // there isn't really a nice way to do this...
+    $preferences->mods[$modname]->instances[$cm->instance]->name = get_field($modname,'name','id',$cm->instance); /* sigh */
 
     // finally, clean all the $preferences->mods[] not having instances. Nothing to backup about them
     foreach ($preferences->mods as $modname => $mod) {
@@ -195,102 +157,30 @@ function course_copy_schedule_backup_course_configure($course, $cmid, $starttime
     $preferences->backup_messages = $backup_config->backup_sche_messages;
     $preferences->backup_blogs = $backup_config->backup_sche_blogs;
     $preferences->backup_course = $course->id;
-    $preferences->backup_destination = "$CFG->dataroot/clibackups/";
+    $preferences->backup_destination = course_copy_backup_dir();
     mkdir($preferences->backup_destination);
 
     //Calculate various backup preferences
     course_copy_schedule_backup_log($starttime,$course->id,"    calculating backup name");
 
-    //Calculate the backup file name
-    $namebase = preg_replace('/[^A-Za-z0-9_\.-]/', '', $course->shortname);
-    course_copy_schedule_backup_log($starttime,$course->id,"    namebase: $namebase");
-    $backup_name = clean_filename($namebase.'.zip');
-    course_copy_schedule_backup_log($starttime,$course->id,"    backup_name: $backup_name");
-
-    //Calculate the string to match the keep preference
-    $keep_name = "keep_" . clean_filename($namebase);
-    course_copy_schedule_backup_log($starttime,$course->id,"    keep_name: $keep_name");
-
-    //Set them
-    $preferences->backup_name = $backup_name;
-    $preferences->keep_name = $keep_name;
-
-    //Roleasignments
-    $roles = get_records('role', '', '', 'sortorder');
-    foreach ($roles as $role) {
-        $preferences->backuproleassignments[$role->id] = $role;
-    }
-
-    //Another Info
-    backup_add_static_preferences($preferences);
-
-    //Calculate the backup unique code to allow simultaneus backups (to define
-    //the temp-directory name and records in backup temp tables
     $backup_unique_code = time();
     $preferences->backup_unique_code = $backup_unique_code;
 
+    $preferences->backup_name = course_copy_backup_name($course->id, $backup_unique_code);
+    course_copy_schedule_backup_log($starttime,$course->id,"    backup_name: $preferences->backup_name");
+
+    backup_add_static_preferences($preferences);
+
+    $modbackup = $modname."_backup_mods";
+    $modcheckbackup = $modname."_check_backup_mods";
+    $modfile = "$CFG->dirroot/mod/$modname/backuplib.php";
+    if (file_exists($modfile)) {
+        include_once($modfile);
+    }
+    $modcheckbackup($course->id, false, $backup_unique_code);
+
     //Calculate necesary info to backup modules
     course_copy_schedule_backup_log($starttime,$course->id,"    calculating modules data");
-    if ($allmods = get_records("modules") ) {
-        foreach ($allmods as $mod) {
-            $modname = $mod->name;
-            $modbackup = $modname."_backup_mods";
-            //If exists the lib & function
-            $var = "exists_".$modname;
-            if (isset($$var) && $$var) {
-                //Add hidden fields
-                $var = "backup_".$modname;
-                //Only if selected
-                if ($$var == 1) {
-                    $var = "backup_user_info_".$modname;
-                    //Call the check function to show more info
-                    $modcheckbackup = $modname."_check_backup_mods";
-                    course_copy_schedule_backup_log($starttime,$course->id,"      $modname");
-                    $modcheckbackup($course->id,$$var,$backup_unique_code);
-                }
-            }
-        }
-    }
-
-    //Now calculate the users
-    course_copy_schedule_backup_log($starttime,$course->id,"    calculating users");
-    //Decide about include users with messages, based on SITEID
-    if ($preferences->backup_messages && $preferences->backup_course == SITEID) {
-        $include_message_users = true;
-    } else {
-        $include_message_users = false;
-    }
-    //Decide about include users with blogs, based on SITEID
-    if ($preferences->backup_blogs && $preferences->backup_course == SITEID) {
-        $include_blog_users = true;
-    } else {
-        $include_blog_users = false;
-    }
-    user_check_backup($course->id,$backup_unique_code,$preferences->backup_users,$include_message_users, $include_blog_users);
-
-    //Now calculate the logs
-    if ($preferences->backup_logs) {
-        course_copy_schedule_backup_log($starttime,$course->id,"    calculating logs");
-        log_check_backup($course->id);
-    }
-
-    //Now calculate the userfiles
-    if ($preferences->backup_user_files) {
-        course_copy_schedule_backup_log($starttime,$course->id,"    calculating user files");
-        user_files_check_backup($course->id,$preferences->backup_unique_code);
-    }
-
-    //Now calculate the coursefiles
-   if ($preferences->backup_course_files) {
-        course_copy_schedule_backup_log($starttime,$course->id,"    calculating course files");
-        course_files_check_backup($course->id,$preferences->backup_unique_code);
-    }
-
-    //Now calculate the sitefiles
-   if ($preferences->backup_site_files) {
-        course_copy_schedule_backup_log($starttime,$course->id,"    calculating site files");
-        site_files_check_backup($course->id,$preferences->backup_unique_code);
-    }
 
     return $preferences;
 }
@@ -300,7 +190,6 @@ function course_copy_schedule_backup_course_configure($course, $cmid, $starttime
 //This function implements all the needed code to backup a course
 //copying it to the desired destination (default if not specified)
 function course_copy_schedule_backup_course_execute($preferences,$starttime = 0) {
-
     global $CFG;
 
     $status = true;
