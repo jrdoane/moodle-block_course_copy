@@ -9,10 +9,10 @@
  * Ugh, and hip-hip-hooray for Moodle 2!
  */
 
-include(dirname(dirname(__FILE__)) . "/backup/backuplib.php");
-include(dirname(dirname(__FILE__)) . "/backup/lib.php");
+require_once(dirname(dirname(dirname(__FILE__))) . "/backup/backuplib.php");
+require_once(dirname(dirname(dirname(__FILE__))) . "/backup/lib.php");
 
-course_copy_schedule_backup_launch_backup($course, time());
+#course_copy_schedule_backup_launch_backup($course, time());
 
 //This function executes the ENTIRE backup of a course (passed as parameter)
 //using all the scheduled backup preferences
