@@ -1,9 +1,7 @@
 <?php
 require_once(dirname(dirname(dirname(__FILE__))) . '/config.php');
-require_once("{$CFG->dirroot}/backup/lib.php");
-require_once("{$CFG->dirroot}/backup/backuplib.php");
+require_once(dirname(__FILE__) . '/backuplib-hacks.php');
 require_once("{$CFG->dirroot}/backup/restorelib.php");
-require_once("{$CFG->dirroot}/mod/quiz/backuplib.php");
 require_once("{$CFG->dirroot}/lib/xmlize.php");
 
 class CourseCopyException extends Exception {}
