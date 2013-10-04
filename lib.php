@@ -1112,12 +1112,11 @@ class course_copy {
 
     public static function restore_course_module($src_course_module_id, $dest_course_id, $backup_code) {
         global $CFG;
-        // This runs the restore.
         $src_course_id = get_field('course_modules', 'course', 'id', $src_course_module_id);
         $prefs = self::generate_restore_prefs($src_course_module_id, $dest_course_id);
         global $preferences;
         $preferences = $prefs;
-        $file_path = "{$CFG->dataroot}/{$src_course_id}/backupdata/{$backup_code}.zip";
+        $file_path = course_copy_backup_path($src_course_id, $backup_code);
         $rval = import_backup_file_silently($file_path, $dest_course_id, false, false, $prefs);
         return $rval;
     }
