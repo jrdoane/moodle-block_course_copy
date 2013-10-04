@@ -18,9 +18,7 @@ $function = $opts->function;
 switch($function) {
 case 'attempt_push':
     $push = get_record('block_course_copy_push', 'id', $opts->push_id);
-    print "push: "; print_r($push); print "\n"; flush();
     $push_instance = get_record('block_course_copy_push_inst', 'id', $opts->push_instance_id);
-    print "push_instance: "; print_r($push_instance); print "\n"; flush();
     $tmp = course_copy::$function($push, $push_instance);
     print_r($tmp);
     break;
@@ -35,6 +33,12 @@ case 'restore_course_module':
     $tmp = course_copy::$function($opts->cmid, $opts->dest_courseid, $opts->backup_code);
     print_r($tmp);
     print_r($err);
+    break;
+case 'course_copy_schedule_backup_launch_backup':
+    $cm = get_record('course_modules', 'id', $opts->cmid);
+    $course = get_record('course', 'id', $cm->course);
+    $tmp = $function($course, $opts->cmid, time());
+    print_r($tmp);
     break;
 default:
     print "Unexpected --function: $opts->function\n";
