@@ -1091,41 +1091,6 @@ class course_copy {
         return get_record_sql($sql);
     }
 
-    public static function generate_backup_prefs($course_module_id) {
-        $cm = get_record('course_modules', 'id', $course_module_id);
-        $module_name = get_field('modules', 'name', 'id', $cm->module);
-        $glorified_instance = self::get_glorified_cm_instance($module_name, $cm);
-        $course = get_record('course', 'id', $cm->course);
-        $backup_prefs = self::generate_prefs('backup', $course->id);
-        $backup_prefs["backup_unique_code"] = time();
-        $backup_prefs["backup_name"] = $backup_prefs["backup_unique_code"] . ".zip";
-        $backup_prefs["exists_{$module_name}"] = true;
-        $backup_prefs["exists_one_{$module_name}"] = true;
-        $backup_prefs["backup_{$module_name}_instances"] = true;
-        $backup_prefs["backup_{$module_name}"] = true;
-        $backup_prefs["backup_{$module_name}_instance_{$cm->instance}"] = 1;
-        $backup_prefs["backup_user_info_{$module_name}_instance_{$cm->instance}"] = 0;
-        $backup_prefs["mods"] = array(
-            $module_name => (object)array(
-                'name' => $module_name,
-                'instances' => array(
-                    $cm->instance => (object)array(
-                        'name' => $glorified_instance->name,
-                        'backup' => 1,
-                        'userinfo' => 0
-                    )
-                ),
-                'backup' => 1,
-                'userinfo' => 0
-            )
-        );
-        $backup_prefs["{$module_name}_instances"] = array($glorified_instance);
-        $backup_prefs = (object)$backup_prefs;
-        backup_add_static_preferences($backup_prefs);
-        file_put_contents('/tmp/jdoane', var_export($backup_prefs, true));
-        return $backup_prefs;
-    }
-
     /**
      * These are shared preferences between backup and restore.
      */
