@@ -460,7 +460,7 @@ class course_copy {
             // we need the course module that was just newly imported. Running 
             // this a second time after we change the old name should leave us 
             // with just the course module we just created.
-            $new_cm_id = self::match_course_module($source_cm_id, $dest_course);
+            $new_cm_id = self::match_course_module($source_cm_id, $dest_course, true);
 
             $old_cm = get_record('course_modules', 'id', $deprecate_cm_id);
             $new_cm = get_record('course_modules', 'id', $new_cm_id);
