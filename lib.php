@@ -1168,15 +1168,15 @@ class course_copy {
         return $cms;
     }
 
-    public static function match_course_module($src_cm_id, $dest_course_id) {
+    public static function match_course_module($src_cm_id, $dest_course_id, $flushcache=false) {
         static $cm_cache;
         static $result_cache;
         $key = $src_cm_id . ':' . $dest_course_id;
 
-        if(empty($cm_cache)) {
+        if($flushcache or empty($cm_cache)) {
             $cm_cache = array();
         }
-        if(empty($result_cache)) {
+        if($flushcache or empty($result_cache)) {
             $result_cache = array();
         }
 
