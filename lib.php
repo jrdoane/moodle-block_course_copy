@@ -1127,50 +1127,7 @@ class course_copy {
         $module_name = get_field('modules', 'name', 'id', $cm->module);
         $course = get_record('course', 'id', $cm->course);
 
-        // We don't want to hear the backup output. That will will only remind us that 
-        // this uses the Moodle 1.9 backup/restore system. Something we would rather not 
-        // remember. :) --jdoane 2012/01/16
-        define('BACKUP_SILENTLY', true);
-
-        // Fake some backup data so we can generate some preferences.
-        $prefs = self::generate_backup_prefs($cmid);
-
-        ### These next 3 lines are madness! (Blame Moodle 1.9) ###
-        ### -jdoane (20130805)                                 ###
-        ### <madness> ###
-        global $preferences;
-        $preferences =& $prefs;
-        $CFG->backup_preferences =& $prefs;
-        ### </madness> ###
-
-        // Moodle has some insanity where it stores some data that it needs 
-        // later in the initial backup checks that we bypassed. I don't 
-        // recommend getting rid of these. --jdoane 20130729
-        self::moodle_backup_checks($cm->course, $prefs);
-
-        $rval = backup_execute($prefs, $err);
-        if($rval) {
-            return $prefs->backup_unique_code;
-        }
-        return false;
-    }
-
-    /**
-     * This does all of Moodle's little checks that enables us to actually 
-     * backup anything.
-     * @param int       $course_id is exactly what it sounds like.
-     * @param object    $prefs is a backup preferences object.
-     * @return null
-     */
-    public static function moodle_backup_checks($course_id, &$prefs) {
-        #user_check_backup($course_id, $prefs->backup_unique_code, $prefs->backup_users, $prefs->backup_messages, $prefs->backup_blogs);
-        log_check_backup($course_id);
-        user_files_check_backup($course_id, $prefs->backup_unique_code);
-        course_files_check_backup($course_id, $prefs->backup_unique_code);
-        site_files_check_backup($course_id, $prefs->backup_unique_code);
-        if(!empty($prefs->quiz_instances)) {
-            quiz_check_backup_mods($course_id, $prefs->quiz_instances, $prefs->backup_unique_code);
-        }
+        return course_copy_schedule_backup_launch_backup($course, $cmid, time());
     }
 
     public static function db_table_prefix() {
